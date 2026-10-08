@@ -86,3 +86,7 @@ h2 button.link { margin-left: 0; }
 .rangectl .custom button:disabled { opacity: .5; cursor: default; }
 .legend { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); }
 .legend i { flex: 1; height: 5px; border-radius: 3px; background: linear-gradient(90deg, #8888, #888); min-width: 50px; }
+
+/* Installed as an iOS web app (viewport-fit=cover): keep content clear of the home indicator and landscape notch. */
+.side { padding-bottom: calc(16px + env(safe-area-inset-bottom)); padding-left: calc(16px + env(safe-area-inset-left)); }
+.toasts { bottom: calc(24px + env(safe-area-inset-bottom)); }
