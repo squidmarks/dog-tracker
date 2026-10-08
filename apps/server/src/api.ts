@@ -2,6 +2,7 @@ import express from "express";
 import type { Db, DogInput, DogLive, Settings, ZoneInput } from "./db.js";
 import { decimate } from "./decimate.js";
 import { circleRing } from "./geo.js";
+import type { Hub } from "./hubs.js";
 import type { MeshEvent } from "./decode.js";
 import { isSimNode, SCENARIOS, type Scenario, startSimulator } from "./sim.js";
 
@@ -14,6 +15,14 @@ export interface Hooks {
   onDogDeleted: (id: string) => unknown;
   /** Zones or alert settings changed. */
   onZonesChanged: () => unknown;
+  listHubs: () => Promise<Hub[]>;
+  notifications: {
+    pushoverConfigured: boolean;
+    webPushConfigured: boolean;
+    vapidPublicKey: string | null;
+    testPushover: () => Promise<boolean>;
+    testWebPush: (endpoint: string) => Promise<boolean>;
+  };
   getSim: () => Sim | null;
 }
 
@@ -115,6 +124,40 @@ export function createApp(db: Db, hooks: Hooks) {
     res.json({ ok: true });
   });
 
+  // --- Notification channels: Pushover (one account, server-wide) and Web Push (one subscription per device) ---
+  app.get("/api/notifications", async (_req, res) => {
+    const [settings, devices] = await Promise.all([db.settings(), db.pushSubscriptions()]);
+    res.json({
+      pushover: { configured: hooks.notifications.pushoverConfigured, enabled: settings.pushoverEnabled },
+      webPush: {
+        configured: hooks.notifications.webPushConfigured, publicKey: hooks.notifications.vapidPublicKey,
+        devices: devices.map(({ endpoint, label, createdAt, lastOk }) => ({ endpoint, label, createdAt, lastOk: lastOk ?? null })),
+      },
+    });
+  });
+  app.post("/api/push/subscribe", async (req, res) => {
+    try {
+      const { subscription, label } = req.body ?? {};
+      await db.savePushSubscription({ endpoint: subscription?.endpoint, keys: subscription?.keys, label: String(label ?? "Device").slice(0, 60) });
+      res.status(201).json({ ok: true });
+    } catch (e) { res.status(400).json({ error: (e as Error).message }); }
+  });
+  app.delete("/api/push/subscribe", async (req, res) => {
+    const endpoint = String(req.body?.endpoint ?? "");
+    (await db.removePushSubscription(endpoint)) ? res.json({ ok: true }) : res.status(404).json({ error: "unknown device" });
+  });
+  app.post("/api/push/test", async (req, res) => {
+    const ok = await hooks.notifications.testWebPush(String(req.body?.endpoint ?? ""));
+    ok ? res.json({ ok: true }) : res.status(502).json({ error: "The push service didn't accept the test (is this device still subscribed?)" });
+  });
+  app.post("/api/pushover/test", async (_req, res) => {
+    const ok = await hooks.notifications.testPushover();
+    ok ? res.json({ ok: true }) : res.status(502).json({ error: hooks.notifications.pushoverConfigured ? "Pushover rejected the message" : "Pushover isn't configured on the server" });
+  });
+
+  // --- LoRa hubs (gateways) ---
+  app.get("/api/hubs", async (_req, res) => res.json(await hooks.listHubs()));
+
   // --- Activity (events) and alert settings ---
   app.get("/api/events", async (req, res) => res.json(await db.events(Number(req.query.limit ?? 50))));
   app.get("/api/settings", async (_req, res) => res.json(await db.settings()));
@@ -154,7 +197,7 @@ export function createApp(db: Db, hooks: Hooks) {
     req.on("close", () => streams.delete(res));
   });
 
-  const broadcast = (ev: MeshEvent | { kind: "dogs" | "zones" } | { kind: "event"; event: unknown }) => {
+  const broadcast = (ev: MeshEvent | { kind: "dogs" | "zones" | "hubs" } | { kind: "event"; event: unknown }) => {
     for (const s of streams) s.write(`data: ${JSON.stringify(ev)}\n\n`);
   };
   // Dog edits made in one browser tab should refresh the others.

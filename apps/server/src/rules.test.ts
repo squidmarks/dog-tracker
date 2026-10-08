@@ -84,6 +84,20 @@ describe.skipIf(!hasMongo)("Monitor (Mongo)", () => {
     expect(events.find((e) => e.type === "reporting")).toMatchObject({ alert: false });
   });
 
+  it("doesn't raise per-dog silence alerts while every hub is down, and does once a hub is back", async () => {
+    let down = true;
+    monitor = new Monitor(db, (e) => { events.push(e); }, () => down);
+    await monitor.reload(true);
+    await db.updateSettings({ staleMinutes: 10 });
+    await db.apply({ kind: "telemetry", node: "!aaaa0001", battery: 90, voltage: 4 }, 1000);
+    await monitor.tick(1060);                                   // seed
+    await monitor.tick(1000 + 11 * 60);                         // silent, but the hub is down: nothing
+    expect(events.filter((e) => e.type === "silent")).toHaveLength(0);
+    down = false;
+    await monitor.tick(1000 + 12 * 60);                         // hub back and the dog is still silent: now it counts
+    expect(events.filter((e) => e.type === "silent")).toHaveLength(1);
+  });
+
   it("alerts on low battery but never for the 'charging' marker", async () => {
     await db.apply({ kind: "telemetry", node: "!aaaa0001", battery: 80, voltage: 4 }, 1000);
     await monitor.tick(1010);                                              // seed

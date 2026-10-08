@@ -22,17 +22,25 @@ export type AlertOn = "exit" | "enter" | "both" | "none";
 export interface Zone {
   id: string; name: string; color: string; ring: [number, number][]; alertOn: AlertOn; home: boolean; dogs: string[] | null;
 }
-export type EventType = "zone_exit" | "zone_enter" | "silent" | "reporting" | "low_battery" | "battery_ok";
+export type EventType = "zone_exit" | "zone_enter" | "silent" | "reporting" | "low_battery" | "battery_ok" | "hub_offline" | "hub_online";
 export interface DogEvent {
   id: string; ts: number; type: EventType; dogId: string; dogName: string; zoneId?: string; zoneName?: string;
   lat?: number | null; lon?: number | null; alert: boolean; message: string; sim?: boolean;
 }
-export interface Settings { staleMinutes: number; lowBatteryPct: number; fenceMarginM: number }
+export interface Settings {
+  staleMinutes: number; lowBatteryPct: number; fenceMarginM: number; hubSilentMinutes: number; pushoverEnabled: boolean;
+}
+export interface Hub { id: string; name: string; status: "online" | "offline"; since: number; lastPacket: number | null }
+export interface Notifications {
+  pushover: { configured: boolean; enabled: boolean };
+  webPush: { configured: boolean; publicKey: string | null; devices: { endpoint: string; label: string; createdAt: number; lastOk: number | null }[] };
+}
 /** Zone drawing in progress on the map. Points are [lon, lat]; a circle is [centre, edge]. */
 export interface DrawState { mode: "polygon" | "circle"; points: [number, number][]; zoneId?: string }
 
 export const EVENT_ICON: Record<EventType, string> = {
   zone_exit: "🚪", zone_enter: "📍", silent: "📡", reporting: "✅", low_battery: "🪫", battery_ok: "🔋",
+  hub_offline: "🔌", hub_online: "🛰️",
 };
 export const ALERT_LABEL: Record<AlertOn, string> = {
   exit: "Alert when a dog leaves", enter: "Alert when a dog enters", both: "Alert on both", none: "Log only, no alerts",

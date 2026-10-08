@@ -8,7 +8,7 @@ import { api } from "../lib/api";
 import { distanceM } from "../lib/geo";
 import {
   ago, ALERT_LABEL, batteryLabel, dogColor, dogEmoji, EVENT_ICON, trackerLabel,
-  RANGE_LABEL, type Dog, type DogEvent, type DrawState, type RangePreset, type SimState, type Tracker, type TrackRange, type Zone,
+  RANGE_LABEL, type Dog, type DogEvent, type DrawState, type Hub, type RangePreset, type SimState, type Tracker, type TrackRange, type Zone,
 } from "../lib/types";
 
 const STALE_AFTER_S = 15 * 60;
@@ -30,6 +30,7 @@ export default function Page() {
   const [dialog, setDialog] = useState<DogDialogState | null>(null);
   const [zones, setZones] = useState<Zone[]>([]);
   const [events, setEvents] = useState<DogEvent[]>([]);
+  const [hubs, setHubs] = useState<Hub[]>([]);
   const [zoneDialog, setZoneDialog] = useState<ZoneDialogState | null>(null);
   const [draw, setDraw] = useState<DrawState | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -46,8 +47,8 @@ export default function Page() {
 
   const load = useCallback(async () => {
     try {
-      const [d, t, z, ev] = await Promise.all([api.dogs(), api.trackers(), api.zones(), api.events(25)]);
-      setDogs(d); setTrackers(t); setZones(z); setEvents(ev); setLoadError(null);
+      const [d, t, z, ev, h] = await Promise.all([api.dogs(), api.trackers(), api.zones(), api.events(25), api.hubs()]);
+      setDogs(d); setTrackers(t); setZones(z); setEvents(ev); setHubs(h); setLoadError(null);
     } catch (e) { setLoadError((e as Error).message); }
     api.sim().then(setSim).catch(() => setSim(null));
   }, []);
@@ -202,6 +203,21 @@ export default function Page() {
           ))}
         </section>
 
+        {hubs.length > 0 && (
+          <section>
+            <h2>LoRa hubs <span className="count">{hubs.length}</span></h2>
+            {hubs.map((h) => (
+              <div key={h.id} className="card hub">
+                <b><span className={`status ${h.status}`} />{h.name}</b>
+                <div className={`meta ${h.status === "offline" ? "stale" : ""}`}>
+                  {h.status === "online" ? "Online" : "Offline"} since {ago(h.since, now).replace(" ago", " ago")}
+                  {h.lastPacket && h.status === "online" ? ` · last packet ${ago(h.lastPacket, now)}` : ""}
+                </div>
+              </div>
+            ))}
+          </section>
+        )}
+
         {others.length > 0 && (
           <details className="others">
             <summary>Other devices ({others.length})</summary>
@@ -262,6 +278,12 @@ export default function Page() {
             <div className="legend" aria-hidden><span>older</span><i /><span>newer</span></div>
           </div>
         </div>
+        {hubs.some((h) => h.status === "offline") && (
+          <div className="hubbanner" role="alert">
+            ⚠️ {hubs.filter((h) => h.status === "offline").map((h) => `LoRa hub ${h.name} has been offline for ${ago(h.since, now).replace(" ago", "")}`).join(" · ")}.
+            {" "}Collars can&apos;t report until it&apos;s back.
+          </div>
+        )}
         {draw && (
           <div className="drawbar">
             <span>{draw.mode === "circle"

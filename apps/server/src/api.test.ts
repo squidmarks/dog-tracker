@@ -5,7 +5,9 @@ import type { Db } from "./db.js";
 import { freshDb, hasMongo } from "./testdb.js";
 
 let db: Db, base: string, close: () => void;
-const hooks = { onDogChanged: vi.fn(), onDogDeleted: vi.fn(), onZonesChanged: vi.fn(), getSim: () => null };
+const hooks = { onDogChanged: vi.fn(), onDogDeleted: vi.fn(), onZonesChanged: vi.fn(), listHubs: async () => [],
+  notifications: { pushoverConfigured: true, webPushConfigured: true, vapidPublicKey: "PUBKEY", testPushover: async () => true, testWebPush: async (e: string) => e === "https://push.example/ok" },
+  getSim: () => null };
 const call = async (method: string, path: string, body?: unknown) => {
   const res = await fetch(base + path, { method, headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
   return { status: res.status, body: await res.json() as any };
@@ -91,14 +93,49 @@ describe.skipIf(!hasMongo)("zones, events and settings API (Mongo)", () => {
   });
 
   it("reads and updates alert settings", async () => {
-    expect((await call("GET", "/api/settings")).body).toEqual({ staleMinutes: 20, lowBatteryPct: 20, fenceMarginM: 5 });
+    expect((await call("GET", "/api/settings")).body).toEqual({ staleMinutes: 20, lowBatteryPct: 20, fenceMarginM: 5, hubSilentMinutes: 45, pushoverEnabled: true });
     expect((await call("PUT", "/api/settings", { staleMinutes: 45 })).body.staleMinutes).toBe(45);
     expect((await call("PUT", "/api/settings", { staleMinutes: -3 })).status).toBe(400);
+    expect((await call("PUT", "/api/settings", { pushoverEnabled: false })).body.pushoverEnabled).toBe(false);
   });
 
   it("lists recent events newest first", async () => {
     await db.addEvent({ ts: 100, type: "silent", dogId: "d", dogName: "Ozzie", alert: true, message: "a" });
     await db.addEvent({ ts: 200, type: "reporting", dogId: "d", dogName: "Ozzie", alert: false, message: "b" });
     expect((await call("GET", "/api/events?limit=5")).body.map((e: any) => e.message)).toEqual(["b", "a"]);
+  });
+});
+
+describe.skipIf(!hasMongo)("notification channels API (Mongo)", () => {
+  beforeEach(async () => {
+    db = await freshDb();
+    const server = createApp(db, { ...hooks }).app.listen(0);
+    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    close = () => server.close();
+  });
+  afterEach(async () => { close(); await db.close(); });
+
+  it("registers a device, lists it, tests it, and removes it", async () => {
+    const sub = { endpoint: "https://push.example/ok", keys: { p256dh: "p", auth: "a" } };
+    expect((await call("POST", "/api/push/subscribe", { subscription: sub, label: "Geoff's iPhone" })).status).toBe(201);
+    const n = (await call("GET", "/api/notifications")).body;
+    expect(n.pushover).toEqual({ configured: true, enabled: true });
+    expect(n.webPush).toMatchObject({ configured: true, publicKey: "PUBKEY" });
+    expect(n.webPush.devices).toMatchObject([{ endpoint: sub.endpoint, label: "Geoff's iPhone" }]);
+    expect((await call("POST", "/api/push/test", { endpoint: sub.endpoint })).status).toBe(200);
+    expect((await call("POST", "/api/push/test", { endpoint: "https://push.example/gone" })).status).toBe(502);
+    expect((await call("DELETE", "/api/push/subscribe", { endpoint: sub.endpoint })).status).toBe(200);
+    expect((await call("DELETE", "/api/push/subscribe", { endpoint: sub.endpoint })).status).toBe(404);
+    expect((await call("GET", "/api/notifications")).body.webPush.devices).toEqual([]);
+  });
+
+  it("rejects a malformed subscription", async () => {
+    expect((await call("POST", "/api/push/subscribe", { subscription: { endpoint: "x" }, label: "bad" })).status).toBe(400);
+  });
+
+  it("can switch Pushover off and tests it on demand", async () => {
+    await call("PUT", "/api/settings", { pushoverEnabled: false });
+    expect((await call("GET", "/api/notifications")).body.pushover.enabled).toBe(false);
+    expect((await call("POST", "/api/pushover/test")).status).toBe(200);
   });
 });

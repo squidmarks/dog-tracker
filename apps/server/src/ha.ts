@@ -1,6 +1,7 @@
 import type { MqttClient } from "mqtt";
 import { config } from "./config.js";
 import type { Db, DogEvent, Zone } from "./db.js";
+import type { Hub } from "./hubs.js";
 import type { Monitor } from "./rules.js";
 
 const PREFIX = "dogtracker";
@@ -57,7 +58,7 @@ export function discoveryMessages(dog: Pick<DogRow, "id" | "name">, zones: Pick<
 const STATE_LEAVES = ["attributes", "tracker_state", "battery", "last_seen", "rssi", "sats", "reporting"];
 
 /** Publishes every dog that has reported a position to Home Assistant over MQTT Discovery. */
-export function startHa(client: MqttClient, db: Db, monitor: Monitor) {
+export function startHa(client: MqttClient, db: Db, monitor: Monitor, listHubs: () => Promise<Hub[]> = async () => []) {
   /** Which zone sensors each dog currently has in HA, so deleted/changed zones can be retracted. */
   const published = new Map<string, Map<string, string>>(); // dogId -> (zoneId -> zone name)
   const pub = (topic: string, payload: string | object | null, retain = true) =>
@@ -115,6 +116,19 @@ export function startHa(client: MqttClient, db: Db, monitor: Monitor) {
     if (!known.has(id)) { publishDiscovery(d); known.add(id); }
     publishState(d);
   };
+  /** One connectivity sensor per LoRa hub, so Home Assistant can alert (or dashboard) on a dead hub too. */
+  const publishHubs = async () => {
+    for (const h of await listHubs()) {
+      const s = h.id.replace(/^!/, "");
+      pub(`homeassistant/binary_sensor/${PREFIX}_hub_${s}/online/config`, {
+        availability_topic: STATUS_TOPIC, unique_id: `${PREFIX}_hub_${s}_online`, name: "Online", device_class: "connectivity",
+        state_topic: `${PREFIX}/hub/${s}/online`,
+        device: { identifiers: [`${PREFIX}_hub_${s}`], name: `LoRa hub ${h.name}`, manufacturer: "Meshtastic", model: "LoRa gateway" },
+      });
+      pub(`${PREFIX}/hub/${s}/online`, h.status === "online" ? "ON" : "OFF");
+    }
+  };
+
   let syncing = false;
   const syncAll = async (rediscover = false) => {
     if (rediscover) known.clear();
@@ -126,6 +140,7 @@ export function startHa(client: MqttClient, db: Db, monitor: Monitor) {
         if (!known.has(d.id)) { publishDiscovery(d); known.add(d.id); }
         publishState(d);
       }
+      await publishHubs();
     } catch (e) { console.error("[ha]", e); }
     finally { syncing = false; }
   };
@@ -162,8 +177,10 @@ export function startHa(client: MqttClient, db: Db, monitor: Monitor) {
     onZonesChanged: () => syncAll(true),
     /** An alert/info event: fires the dog's HA "Alerts" event entity (automations trigger on it). */
     publishEvent: (e: DogEvent) => {
+      if (!e.dogId) return; // hub events have no dog; Home Assistant gets the hub's own sensor instead
       pub(topics(e.dogId).t("event"), { event_type: e.type, message: e.message, zone: e.zoneName ?? null, alert: e.alert, lat: e.lat ?? null, lon: e.lon ?? null }, false);
     },
     syncAll,
+    publishHubs: () => publishHubs().catch((e) => console.error("[ha]", e)),
   };
 }

@@ -1,4 +1,4 @@
-import type { Dog, DogEvent, Settings, SimState, Tracker, TrackPoint, Zone } from "./types";
+import type { Dog, DogEvent, Hub, Notifications, Settings, SimState, Tracker, TrackPoint, Zone } from "./types";
 
 async function json<T>(res: Response): Promise<T> {
   const body = await res.json().catch(() => ({}));
@@ -24,6 +24,13 @@ export const api = {
   events: (limit = 30) => fetch(`/api/events?limit=${limit}`).then((r) => json<DogEvent[]>(r)),
   settings: () => fetch("/api/settings").then((r) => json<Settings>(r)),
   updateSettings: (input: Partial<Settings>) => send("PUT", "/api/settings", input).then((r) => json<Settings>(r)),
+  hubs: () => fetch("/api/hubs").then((r) => json<Hub[]>(r)),
+  notifications: () => fetch("/api/notifications").then((r) => json<Notifications>(r)),
+  subscribePush: (subscription: PushSubscriptionJSON, label: string) =>
+    send("POST", "/api/push/subscribe", { subscription, label }).then((r) => json<{ ok: true }>(r)),
+  unsubscribePush: (endpoint: string) => send("DELETE", "/api/push/subscribe", { endpoint }).then((r) => json<{ ok: true }>(r)),
+  testPush: (endpoint: string) => send("POST", "/api/push/test", { endpoint }).then((r) => json<{ ok: true }>(r)),
+  testPushover: () => send("POST", "/api/pushover/test").then((r) => json<{ ok: true }>(r)),
   trigger: (trackerId: string, scenario: string) =>
     send("POST", `/api/sim/${encodeURIComponent(trackerId)}/${scenario}?minutes=30`).then((r) => json<{ ok: true }>(r)),
   clearSim: () => send("DELETE", "/api/sim/nodes").then((r) => json<{ removed: number }>(r)),

@@ -90,3 +90,17 @@ h2 button.link { margin-left: 0; }
 /* Installed as an iOS web app (viewport-fit=cover): keep content clear of the home indicator and landscape notch. */
 .side { padding-bottom: calc(16px + env(safe-area-inset-bottom)); padding-left: calc(16px + env(safe-area-inset-left)); }
 .toasts { bottom: calc(24px + env(safe-area-inset-bottom)); }
+
+.hubbanner { position: absolute; top: 0; left: 0; right: 0; z-index: 7; background: #d64545; color: #fff; padding: 10px 14px; font-size: 14px; text-align: center; box-shadow: 0 2px 10px #0006; }
+.status { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex: none; }
+.status.online { background: #3ba55c; }
+.status.offline { background: #d64545; }
+.dialog.wide { width: min(520px, 94vw); max-height: 92dvh; overflow: auto; }
+.dialog h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 16px 0 8px; }
+.channel { border: 1px solid var(--card); border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; }
+.channel button, .channel .btnrow button { font: inherit; font-size: 13px; padding: 5px 12px; border-radius: 8px; border: 1px solid var(--muted); background: var(--card); color: var(--fg); cursor: pointer; margin: 6px 8px 0 0; }
+.channel button.primary { background: #2e86ab; color: #fff; border-color: #2e86ab; }
+.channel button:disabled { opacity: .5; cursor: default; }
+.channel button.link { border: 0; background: none; color: #2e86ab; padding: 0; margin: 0 0 0 8px; }
+.devices { margin: 8px 0 0; padding-left: 18px; font-size: 13px; }
+.ok { color: #3ba55c; font-size: 13px; }

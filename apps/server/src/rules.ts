@@ -18,7 +18,8 @@ export class Monitor {
   private flags = new Map<string, { silent: boolean; lowBattery: boolean }>();
   private lastMargin = -1;
 
-  constructor(private db: Db, private emit: Emit) {}
+  /** `hubsDown` reports that no hub is online, so silent dogs are explained by that one alert instead of one each. */
+  constructor(private db: Db, private emit: Emit, private hubsDown: () => boolean = () => false) {}
 
   /** Reload zones and settings (call after either changes), and seed membership from each dog's last known position. */
   async reload(reseed = false) {
@@ -68,7 +69,8 @@ export class Monitor {
       const f = this.flags.get(dog.id) ?? { silent: false, lowBattery: false };
       this.flags.set(dog.id, f);
 
-      const isSilent = dog.last_heard == null || now - dog.last_heard > settings.staleMinutes * 60;
+      let isSilent = dog.last_heard == null || now - dog.last_heard > settings.staleMinutes * 60;
+      if (isSilent && this.hubsDown()) isSilent = f.silent; // can't hear anyone: the hub alert covers it
       if (isSilent !== f.silent) {
         f.silent = isSilent;
         if (!first) {

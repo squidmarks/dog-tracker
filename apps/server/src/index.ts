@@ -4,8 +4,10 @@ import { openDb } from "./db.js";
 import type { MeshEvent } from "./decode.js";
 import { circleRing } from "./geo.js";
 import { startHa } from "./ha.js";
+import { HubMonitor } from "./hubs.js";
 import { createClient, startIngest } from "./ingest.js";
 import { createNotifier } from "./notify.js";
+import { createPusher } from "./push.js";
 import { serial } from "./queue.js";
 import { Monitor } from "./rules.js";
 import { circleArea, ringArea, startSimulator } from "./sim.js";
@@ -21,25 +23,47 @@ if (config.yard && (await db.zones()).length === 0) {
 
 const client = createClient();
 const notifier = createNotifier();
+const pusher = createPusher(db);
 console.log(`[pushover] ${notifier.enabled ? "enabled" : "disabled (set PUSHOVER_TOKEN and PUSHOVER_USER)"}`);
+console.log(`[webpush] ${pusher.enabled ? "enabled" : "disabled (set VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY)"}`);
 
 let sim: Sim | null = null;
 let broadcast: (ev: Parameters<ReturnType<typeof createApp>["broadcast"]>[0]) => void = () => {};
 
-const monitor = new Monitor(db, async (e) => {
+/** Fan an event out: live UI, Home Assistant, and (when alerting and switched on) the phone. */
+const deliver = async (e: import("./db.js").DogEvent) => {
   console.log(`[event] ${e.alert ? "ALERT " : ""}${e.message}`);
   broadcast({ kind: "event", event: e });
   ha.publishEvent(e);
-  await notifier.notify(e);
-});
-const ha = startHa(client, db, monitor);
+  if (!e.alert) return;
+  // Each channel is independent: Pushover has a server-wide switch, Web Push goes to every subscribed device.
+  if ((await db.settings()).pushoverEnabled) await notifier.notify(e);
+  await pusher.notify(e);
+};
+
+const hubs = new HubMonitor(db, async (e) => { await deliver(e); broadcast({ kind: "hubs" }); void ha.publishHubs(); });
+const monitor = new Monitor(db, deliver, () => hubs.allDown());
+const ha = startHa(client, db, monitor, () => hubs.list());
+await hubs.load();
 await monitor.reload(true);
 setInterval(() => monitor.tick().catch((e) => console.error("[monitor]", e)), 30_000).unref();
+setInterval(() => hubs.tick().catch((e) => console.error("[hubs]", e)), 15_000).unref();
 
 const api = createApp(db, {
   onDogChanged: ha.onDogChanged,
   onDogDeleted: ha.onDogDeleted,
   onZonesChanged: async () => { await monitor.reload(true); await ha.onZonesChanged(); },
+  listHubs: () => hubs.list(),
+  notifications: {
+    pushoverConfigured: notifier.enabled,
+    webPushConfigured: pusher.enabled,
+    vapidPublicKey: pusher.publicKey,
+    testPushover: () => notifier.test(),
+    testWebPush: async (endpoint) => {
+      const sub = (await db.pushSubscriptions()).find((s) => s.endpoint === endpoint);
+      return sub ? pusher.sendTo(sub, { title: "Dog Tracker", body: "Test notification. Native notifications work on this device.", tag: "test", url: "/" }) : false;
+    },
+  },
   getSim: () => sim,
 });
 broadcast = api.broadcast;
@@ -52,7 +76,10 @@ const onNewEvent = async (ev: MeshEvent) => {
     await ha.onEvent(ev.node);
   } catch (e) { console.error("[event]", e); }
 };
-startIngest(client, db, onNewEvent);
+startIngest(client, db, onNewEvent, {
+  onGateway: (id) => hubs.onPacket(id),
+  onBrokerLog: (line) => hubs.onBrokerLog(line),
+});
 
 if (config.simDogs > 0) {
   const centre = config.yard ?? { lat: 45.1705877, lon: -64.7541067, radiusM: 40 };

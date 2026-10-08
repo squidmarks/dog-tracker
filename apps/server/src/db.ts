@@ -38,9 +38,11 @@ export interface Zone {
 }
 export interface ZoneInput { name?: string; color?: string; ring?: [number, number][]; alertOn?: AlertOn; home?: boolean; dogs?: string[] | null }
 
-export type EventType = "zone_exit" | "zone_enter" | "silent" | "reporting" | "low_battery" | "battery_ok";
+export type EventType = "zone_exit" | "zone_enter" | "silent" | "reporting" | "low_battery" | "battery_ok" | "hub_offline" | "hub_online";
 export interface DogEvent {
-  id: string; ts: number; type: EventType; dogId: string; dogName: string;
+  id: string; ts: number; type: EventType;
+  /** Empty for hub events; `dogName` then carries the hub's name. */
+  dogId: string; dogName: string; hubId?: string;
   zoneId?: string; zoneName?: string; lat?: number | null; lon?: number | null;
   /** Worth interrupting the user for (drives push notifications and the highlighted timeline style). */
   alert: boolean; message: string;
@@ -48,8 +50,21 @@ export interface DogEvent {
   sim?: boolean;
 }
 
-export interface Settings { staleMinutes: number; lowBatteryPct: number; fenceMarginM: number }
-export const DEFAULT_SETTINGS: Settings = { staleMinutes: 20, lowBatteryPct: 20, fenceMarginM: 5 };
+export interface Settings {
+  staleMinutes: number; lowBatteryPct: number; fenceMarginM: number;
+  /** Fallback only: a hub that is silent this long without a broker disconnect is treated as offline. */
+  hubSilentMinutes: number;
+  /** Deliver alerts through Pushover (needs PUSHOVER_TOKEN/USER on the server). Web Push is per device. */
+  pushoverEnabled: boolean;
+}
+export const DEFAULT_SETTINGS: Settings = { staleMinutes: 20, lowBatteryPct: 20, fenceMarginM: 5, hubSilentMinutes: 45, pushoverEnabled: true };
+const NUMERIC_SETTINGS = ["staleMinutes", "lowBatteryPct", "fenceMarginM", "hubSilentMinutes"] as const;
+
+export type HubStatus = "online" | "offline";
+export interface HubDoc { id: string; status: HubStatus; since: number; lastPacket: number | null }
+export interface PushSubscriptionDoc {
+  endpoint: string; keys: { p256dh: string; auth: string }; label: string; createdAt: number; lastOk?: number;
+}
 
 const DUPLICATE_KEY = 11000;
 const SIM_NODE = /^!fa[0-9a-f]{6}$/;
@@ -84,6 +99,8 @@ export async function openDb(url: string, dbName: string) {
   const zonesCol: Collection<Omit<Zone, "id"> & { _id: ObjectId }> = db.collection("zones");
   const eventsCol: Collection<Omit<DogEvent, "id"> & { _id: ObjectId }> = db.collection("events");
   const settingsCol: Collection<{ _id: string } & Partial<Settings>> = db.collection("settings");
+  const hubsCol: Collection<{ _id: string; status: HubStatus; since: number; lastPacket: number | null }> = db.collection("hubs");
+  const pushCol: Collection<PushSubscriptionDoc> = db.collection("push_subscriptions");
 
   await positions.createIndex({ node: 1, packet_id: 1 }, { unique: true }); // several base stations can uplink the same packet
   await positions.createIndex({ node: 1, ts: -1 });
@@ -91,6 +108,7 @@ export async function openDb(url: string, dbName: string) {
   await assignments.createIndex({ dogId: 1 }, { unique: true, partialFilterExpression: { open: true } });
   await assignments.createIndex({ dogId: 1, since: 1 });
   await eventsCol.createIndex({ ts: -1 });
+  await pushCol.createIndex({ endpoint: 1 }, { unique: true });
 
   const latestPosition = (node: string) => positions.find({ node }).sort({ ts: -1 }).limit(1).next();
 
@@ -277,20 +295,51 @@ export async function openDb(url: string, dbName: string) {
 
     // --- settings ---------------------------------------------------------
     async settings(): Promise<Settings> {
-      const doc = (await settingsCol.findOne({ _id: "alerts" })) ?? {};
-      const stored = Object.fromEntries(Object.entries(doc).filter(([k, v]) => k in DEFAULT_SETTINGS && typeof v === "number"));
+      const doc: Partial<Settings> = (await settingsCol.findOne({ _id: "alerts" })) ?? {};
+      const stored: Partial<Settings> = {};
+      for (const k of NUMERIC_SETTINGS) if (typeof doc[k] === "number") stored[k] = doc[k];
+      if (typeof doc.pushoverEnabled === "boolean") stored.pushoverEnabled = doc.pushoverEnabled;
       return { ...DEFAULT_SETTINGS, ...stored };
     },
     async updateSettings(input: Partial<Settings>): Promise<Settings> {
       const set: Partial<Settings> = {};
-      for (const k of Object.keys(DEFAULT_SETTINGS) as (keyof Settings)[]) {
+      for (const k of NUMERIC_SETTINGS) {
         if (!(k in input)) continue;
         const v = Number(input[k]);
         if (!Number.isFinite(v) || v < 0) throw new Error(`${k} must be a non-negative number`);
         set[k] = v;
       }
+      if ("pushoverEnabled" in input) set.pushoverEnabled = input.pushoverEnabled !== false;
       if (Object.keys(set).length) await settingsCol.updateOne({ _id: "alerts" }, { $set: set }, { upsert: true });
       return api.settings();
+    },
+
+    // --- hubs (LoRa gateways) --------------------------------------------
+    async hubs(): Promise<HubDoc[]> {
+      return (await hubsCol.find().toArray()).map(({ _id, ...h }) => ({ id: _id, ...h }));
+    },
+    async saveHub(h: HubDoc): Promise<void> {
+      const { id, ...rest } = h;
+      await hubsCol.updateOne({ _id: id }, { $set: rest }, { upsert: true });
+    },
+    /** Best display name for a node: its Meshtastic long name, else its id. */
+    async nodeName(id: string): Promise<string> {
+      return (await nodes.findOne({ _id: id }))?.long_name || id;
+    },
+
+    // --- web push subscriptions (one per device) -------------------------
+    async pushSubscriptions(): Promise<PushSubscriptionDoc[]> {
+      return (await pushCol.find().sort({ createdAt: 1 }).toArray()).map(({ _id, ...p }: any) => p);
+    },
+    async savePushSubscription(sub: Omit<PushSubscriptionDoc, "createdAt">, at = now()): Promise<void> {
+      if (!sub.endpoint || !sub.keys?.p256dh || !sub.keys?.auth) throw new Error("Invalid push subscription");
+      await pushCol.updateOne({ endpoint: sub.endpoint }, { $set: { keys: sub.keys, label: sub.label }, $setOnInsert: { createdAt: at } }, { upsert: true });
+    },
+    async removePushSubscription(endpoint: string): Promise<boolean> {
+      return (await pushCol.deleteOne({ endpoint })).deletedCount > 0;
+    },
+    async touchPushSubscription(endpoint: string, at = now()): Promise<void> {
+      await pushCol.updateOne({ endpoint }, { $set: { lastOk: at } });
     },
 
     /** Remove simulated trackers, their positions and any dogs that carried them. Returns the removed dog ids so callers can retract them elsewhere (Home Assistant). */
@@ -306,7 +355,7 @@ export async function openDb(url: string, dbName: string) {
     },
 
     /** Test helper: empty every collection (the app user can't drop databases, by design). */
-    wipe: async () => { await Promise.all([nodes, positions, dogsCol, assignments, zonesCol, eventsCol, settingsCol].map((c) => c.deleteMany({}))); },
+    wipe: async () => { await Promise.all([nodes, positions, dogsCol, assignments, zonesCol, eventsCol, settingsCol, hubsCol, pushCol].map((c: Collection<any>) => c.deleteMany({}))); },
     close: () => client.close(),
   };
   return api;
