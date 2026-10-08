@@ -7,7 +7,7 @@ export default function manifest(): MetadataRoute.Manifest {
     description: "Live GPS tracking for the dogs",
     start_url: "/",
     display: "standalone",
-    background_color: "#111418",
+    background_color: "#ffffff",
     theme_color: "#2e86ab",
     icons: [
       { src: "/icon", sizes: "512x512", type: "image/png", purpose: "any" },
