@@ -64,7 +64,7 @@ export function MapView({ dogs, trackers, zones, draw, focus, base, onDrawClick,
         sources: {
           osm: { type: "raster", tileSize: 256, attribution: "© OpenStreetMap contributors",
             tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"] },
-          sat: { type: "raster", tileSize: 256, maxzoom: 19, attribution: "Imagery © Esri, Maxar, Earthstar Geographics",
+          sat: { type: "raster", tileSize: 256, maxzoom: 18, attribution: "Imagery © Esri, Maxar, Earthstar Geographics",
             tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"] },
         },
         layers: [
