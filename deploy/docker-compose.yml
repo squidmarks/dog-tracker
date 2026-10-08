@@ -27,7 +27,7 @@ services:
     restart: unless-stopped
     environment:
       API_URL: http://server:4000
-    ports: ["3000:3000"]
+    ports: ["127.0.0.1:3800:3000"]   # Caddy on the host fronts this
     depends_on: [server]
 
 volumes:
