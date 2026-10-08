@@ -1,8 +1,11 @@
 import express from "express";
 import type { Db, DogInput, DogLive, Settings, ZoneInput } from "./db.js";
+import { decimate } from "./decimate.js";
 import { circleRing } from "./geo.js";
 import type { MeshEvent } from "./decode.js";
 import { isSimNode, SCENARIOS, type Scenario, startSimulator } from "./sim.js";
+
+const MAX_TRACK_POINTS = 2500;
 
 export type Sim = ReturnType<typeof startSimulator>;
 
@@ -78,9 +81,16 @@ export function createApp(db: Db, hooks: Hooks) {
     res.json({ ok: true });
   });
 
+  // Track for a window: `hours` back from now, or an explicit `from`/`to` (epoch seconds). Capped at 31 days
+  // and thinned to MAX_TRACK_POINTS so a week-long view doesn't ship thousands of points per dog.
   app.get("/api/dogs/:id/track", async (req, res) => {
-    const hours = Math.min(Number(req.query.hours ?? 24), 24 * 30);
-    res.json(await db.dogTrack(req.params.id, Math.floor(Date.now() / 1000) - hours * 3600));
+    const nowS = Math.floor(Date.now() / 1000);
+    const MAX_SPAN = 31 * 24 * 3600;
+    let to = req.query.to != null ? Number(req.query.to) : nowS;
+    let from = req.query.from != null ? Number(req.query.from) : to - Math.min(Number(req.query.hours ?? 24), 24 * 31) * 3600;
+    if (!Number.isFinite(from) || !Number.isFinite(to) || from >= to) return res.status(400).json({ error: "bad time range" });
+    from = Math.max(from, to - MAX_SPAN);
+    res.json(decimate(await db.dogTrack(req.params.id, from, to), MAX_TRACK_POINTS));
   });
 
   // --- Zones ---

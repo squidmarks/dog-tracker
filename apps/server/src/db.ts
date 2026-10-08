@@ -227,13 +227,14 @@ export async function openDb(url: string, dbName: string) {
       await assignments.deleteMany({ dogId: _id });
       return deletedCount > 0;
     },
-    async dogTrack(id: string, sinceTs: number) {
+    async dogTrack(id: string, sinceTs: number, untilTs = Infinity) {
       const _id = oid(id);
       if (!_id) return [];
       const out: { ts: number; lat: number; lon: number; speed: number | null }[] = [];
       for (const a of await assignments.find({ dogId: _id }).sort({ since: 1 }).toArray()) {
         const ts: Record<string, number> = { $gte: Math.max(a.since, sinceTs) };
-        if (a.until != null) ts.$lte = a.until;
+        const hi = Math.min(a.until ?? Infinity, untilTs);
+        if (Number.isFinite(hi)) ts.$lte = hi;
         for (const p of await positions.find({ node: a.node, ts }).sort({ ts: 1 }).toArray()) {
           out.push({ ts: p.ts, lat: p.lat, lon: p.lon, speed: p.speed });
         }

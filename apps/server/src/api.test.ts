@@ -39,6 +39,14 @@ describe.skipIf(!hasMongo)("dogs API (Mongo)", () => {
     expect(dup.body.error).toMatch(/already belongs to Ozzie/);
   });
 
+  it("serves a dog's track for an explicit window and rejects a bad one", async () => {
+    for (const [i, ts] of [100, 200, 300].entries())
+      await db.apply({ kind: "position", node: "!aaaa0001", packetId: 10 + i, gateway: "!g", rssi: -80, snr: 5, ts, lat: 45 + i / 1000, lon: -64, alt: null, speed: null, sats: 8 }, ts);
+    const { body: dog } = await call("POST", "/api/dogs", { name: "Ozzie", tracker: "!aaaa0001" });
+    expect((await call("GET", `/api/dogs/${dog.id}/track?from=150&to=350`)).body.map((p: any) => p.ts)).toEqual([200, 300]);
+    expect((await call("GET", `/api/dogs/${dog.id}/track?from=500&to=100`)).status).toBe(400);
+  });
+
   it("edits, unlinks and deletes", async () => {
     const { body: dog } = await call("POST", "/api/dogs", { name: "Ozzie", tracker: "!aaaa0001" });
     const edited = await call("PATCH", `/api/dogs/${dog.id}`, { breed: "Lab", tracker: "" });

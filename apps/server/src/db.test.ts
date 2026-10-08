@@ -57,6 +57,13 @@ describe.skipIf(!hasMongo)("trackers and dogs (Mongo)", () => {
     expect((await db.trackers()).find((t) => t.id === "!aaaa0001")!.dog_id).toBeNull();
   });
 
+  it("limits a dog's track to a time window", async () => {
+    for (const [i, ts] of [100, 200, 300, 400].entries()) await pos("!aaaa0001", i + 1, ts, 45 + i / 1000);
+    const id = await db.createDog({ name: "Ozzie", tracker: "!aaaa0001" }, 50);
+    expect((await db.dogTrack(id, 150, 350)).map((p) => p.ts)).toEqual([200, 300]);
+    expect((await db.dogTrack(id, 250)).map((p) => p.ts)).toEqual([300, 400]);
+  });
+
   it("a failed swap leaves the dog on its current tracker", async () => {
     await pos("!aaaa0001", 1, 100);
     await pos("!bbbb0002", 2, 100);

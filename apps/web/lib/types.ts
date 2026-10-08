@@ -55,3 +55,28 @@ export function ago(ts: number | null, now = Date.now() / 1000): string {
 }
 
 export const batteryLabel = (b: number | null) => (b == null ? "" : b > 100 ? "charging" : `${b}%`);
+
+// --- Track window: which part of each dog's history to draw, fading with age ---
+export type RangePreset = "hour" | "today" | "yesterday" | "week" | "custom";
+export interface TrackRange { preset: RangePreset; customFrom?: number; customTo?: number }
+export const RANGE_LABEL: Record<RangePreset, string> = {
+  hour: "Last hour", today: "Today", yesterday: "Yesterday", week: "Last 7 days", custom: "Custom…",
+};
+
+/** Resolve a preset to concrete epoch seconds. `rolling` windows end "now" and move with the clock. */
+export function resolveRange(r: TrackRange, nowS = Date.now() / 1000): { from: number; to: number; rolling: boolean } {
+  const midnight = new Date(nowS * 1000); midnight.setHours(0, 0, 0, 0);
+  const today0 = midnight.getTime() / 1000;
+  switch (r.preset) {
+    case "hour": return { from: nowS - 3600, to: nowS, rolling: true };
+    case "today": return { from: today0, to: nowS, rolling: true };
+    case "yesterday": return { from: today0 - 86400, to: today0, rolling: false };
+    case "week": return { from: nowS - 7 * 86400, to: nowS, rolling: true };
+    case "custom": {
+      const to = r.customTo ?? nowS;
+      return { from: r.customFrom ?? today0, to, rolling: r.customTo == null };
+    }
+  }
+}
+/** Identity of a range that doesn't change as the clock ticks (used to know when to refetch). */
+export const rangeKey = (r: TrackRange) => `${r.preset}:${r.customFrom ?? ""}:${r.customTo ?? ""}`;

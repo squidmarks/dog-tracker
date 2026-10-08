@@ -3,12 +3,12 @@ import * as maplibregl from "maplibre-gl";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { circleRing, distanceM } from "../lib/geo";
-import { ago, dogColor, dogEmoji, trackerLabel, type DrawState, type Dog, type Tracker, type Zone } from "../lib/types";
+import { trackSegments } from "../lib/track";
+import { ago, dogColor, dogEmoji, rangeKey, resolveRange, trackerLabel, type DrawState, type Dog, type Tracker, type TrackRange, type Zone } from "../lib/types";
 
 // MapLibre's web worker can't be bundled by Next; it is copied to /public by the copy-worker script.
 maplibregl.setWorkerUrl("/maplibre-gl-worker.mjs");
 
-const TRACK_HOURS = 6;
 const TRACK_REFRESH_S = 10;
 
 export interface Focus { lat: number; lon: number; n: number }
@@ -42,8 +42,8 @@ const zonesGeoJSON = (zones: Zone[]) => ({
 
 export type BaseLayer = "map" | "satellite";
 
-export function MapView({ dogs, trackers, zones, draw, focus, base, onDrawClick, onZoneClick }: {
-  dogs: Dog[]; trackers: Tracker[]; zones: Zone[]; draw: DrawState | null; focus: Focus | null; base: BaseLayer;
+export function MapView({ dogs, trackers, zones, draw, focus, base, range, onDrawClick, onZoneClick }: {
+  dogs: Dog[]; trackers: Tracker[]; zones: Zone[]; draw: DrawState | null; focus: Focus | null; base: BaseLayer; range: TrackRange;
   onDrawClick: (lat: number, lon: number) => void; onZoneClick: (id: string) => void;
 }) {
   const live = useRef({ draw, zones, base, onDrawClick, onZoneClick });
@@ -52,7 +52,10 @@ export function MapView({ dogs, trackers, zones, draw, focus, base, onDrawClick,
   const map = useRef<maplibregl.Map | null>(null);
   const dogMarkers = useRef(new Map<string, maplibregl.Marker>());
   const trackerMarkers = useRef(new Map<string, maplibregl.Marker>());
-  const lastTrack = useRef(new Map<string, number>());
+  const lastTrack = useRef(new Map<string, { at: number; key: string }>());
+  const rangeRef = useRef(range);
+  rangeRef.current = range;
+  const rKey = rangeKey(range);
   const fitted = useRef(false);
   const dogsRef = useRef(dogs);
   dogsRef.current = dogs; // the async draw loop below must always see the latest dogs, not the ones from when it started
@@ -162,18 +165,22 @@ export function MapView({ dogs, trackers, zones, draw, focus, base, onDrawClick,
         node.style.background = dogColor(d);
         mk.setLngLat([d.lon, d.lat]).setPopup(new maplibregl.Popup({ offset: 18 }).setText(`${d.name} · ${ago(d.pos_ts)}`));
 
-        const last = lastTrack.current.get(d.id) ?? 0;
-        if (Date.now() / 1000 - last < TRACK_REFRESH_S) continue;
-        lastTrack.current.set(d.id, Date.now() / 1000);
-        const track = await api.track(d.id, TRACK_HOURS).catch(() => []);
-        const data = { type: "Feature" as const, properties: {},
-          geometry: { type: "LineString" as const, coordinates: track.map((p) => [p.lon, p.lat]) } };
+        // Rolling windows refresh every few seconds; fixed ones (yesterday, custom) are fetched once.
+        const { from, to, rolling } = resolveRange(rangeRef.current);
+        const key = rangeKey(rangeRef.current);
+        const seen = lastTrack.current.get(d.id);
+        if (seen && seen.key === key && (!rolling || Date.now() / 1000 - seen.at < TRACK_REFRESH_S)) continue;
+        lastTrack.current.set(d.id, { at: Date.now() / 1000, key });
+        const track = await api.track(d.id, from, to).catch(() => []);
+        const data = trackSegments(track, from, to);
         const src = m.getSource(`t-${d.id}`) as maplibregl.GeoJSONSource | undefined;
         if (src) src.setData(data);
         else {
           m.addSource(`t-${d.id}`, { type: "geojson", data });
           m.addLayer({ id: `t-${d.id}`, type: "line", source: `t-${d.id}`,
-            paint: { "line-color": dogColor(d), "line-width": 3, "line-opacity": 0.7 } });
+            layout: { "line-cap": "round", "line-join": "round" },
+            paint: { "line-color": dogColor(d), "line-width": 3.5,
+              "line-opacity": ["interpolate", ["linear"], ["get", "a"], 0, 0.95, 1, 0.12] } });
         }
       }
       if (!fitted.current && !bounds.isEmpty()) {
@@ -190,7 +197,7 @@ export function MapView({ dogs, trackers, zones, draw, focus, base, onDrawClick,
       try { do { st.again = false; await draw(); } while (st.again); } finally { st.running = false; }
     };
     void run();
-  }, [dogs, ready]);
+  }, [dogs, ready, rKey]);
 
   // Unclaimed trackers: grey "?" pins, so you can tell which physical collar is which before naming it.
   useEffect(() => {

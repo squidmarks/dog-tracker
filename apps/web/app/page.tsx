@@ -8,10 +8,19 @@ import { api } from "../lib/api";
 import { distanceM } from "../lib/geo";
 import {
   ago, ALERT_LABEL, batteryLabel, dogColor, dogEmoji, EVENT_ICON, trackerLabel,
-  type Dog, type DogEvent, type DrawState, type SimState, type Tracker, type Zone,
+  RANGE_LABEL, type Dog, type DogEvent, type DrawState, type RangePreset, type SimState, type Tracker, type TrackRange, type Zone,
 } from "../lib/types";
 
 const STALE_AFTER_S = 15 * 60;
+
+// <input type="datetime-local"> works in the browser's local time and wants "YYYY-MM-DDTHH:mm".
+const pad = (n: number) => String(n).padStart(2, "0");
+const toLocalInput = (ts?: number) => {
+  if (ts == null) return "";
+  const d = new Date(ts * 1000);
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+};
+const fromLocalInput = (v: string) => (v ? new Date(v).getTime() / 1000 : undefined);
 
 export default function Page() {
   const [dogs, setDogs] = useState<Dog[]>([]);
@@ -25,6 +34,7 @@ export default function Page() {
   const [draw, setDraw] = useState<DrawState | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [base, setBase] = useState<BaseLayer>("map");
+  const [range, setRange] = useState<TrackRange>({ preset: "today" });
   const [toasts, setToasts] = useState<{ id: string; text: string }[]>([]);
   const [focus, setFocus] = useState<Focus | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -223,11 +233,34 @@ export default function Page() {
       </aside>
 
       <div className="mapwrap">
-        <MapView dogs={dogs} trackers={trackers} zones={zones} draw={draw} focus={focus} base={base}
+        <MapView dogs={dogs} trackers={trackers} zones={zones} draw={draw} focus={focus} base={base} range={range}
           onDrawClick={onDrawClick} onZoneClick={(id) => { const z = zones.find((x) => x.id === id); if (z) setZoneDialog({ zone: z }); }} />
-        <div className="basectl" role="group" aria-label="Map style">
-          <button className={base === "map" ? "on" : ""} onClick={() => chooseBase("map")}>Map</button>
-          <button className={base === "satellite" ? "on" : ""} onClick={() => chooseBase("satellite")}>Satellite</button>
+        <div className="mapctl">
+          <div className="basectl" role="group" aria-label="Map style">
+            <button className={base === "map" ? "on" : ""} onClick={() => chooseBase("map")}>Map</button>
+            <button className={base === "satellite" ? "on" : ""} onClick={() => chooseBase("satellite")}>Satellite</button>
+          </div>
+          <div className="rangectl">
+            <label>Trails
+              <select value={range.preset} onChange={(e) => {
+                const preset = e.target.value as RangePreset;
+                const start = new Date(); start.setHours(0, 0, 0, 0);
+                setRange(preset === "custom" ? { preset, customFrom: start.getTime() / 1000, customTo: undefined } : { preset });
+              }}>
+                {(Object.keys(RANGE_LABEL) as RangePreset[]).map((k) => <option key={k} value={k}>{RANGE_LABEL[k]}</option>)}
+              </select>
+            </label>
+            {range.preset === "custom" && (
+              <div className="custom">
+                <label>From<input type="datetime-local" value={toLocalInput(range.customFrom)}
+                  onChange={(e) => setRange({ ...range, customFrom: fromLocalInput(e.target.value) })} /></label>
+                <label>To<input type="datetime-local" value={toLocalInput(range.customTo)}
+                  onChange={(e) => setRange({ ...range, customTo: fromLocalInput(e.target.value) })} /></label>
+                <button onClick={() => setRange({ ...range, customTo: undefined })} disabled={range.customTo == null}>To now</button>
+              </div>
+            )}
+            <div className="legend" aria-hidden><span>older</span><i /><span>newer</span></div>
+          </div>
         </div>
         {draw && (
           <div className="drawbar">

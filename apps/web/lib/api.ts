@@ -12,7 +12,8 @@ export const api = {
   dogs: () => fetch("/api/dogs").then((r) => json<Dog[]>(r)),
   trackers: () => fetch("/api/trackers").then((r) => json<Tracker[]>(r)),
   sim: () => fetch("/api/sim").then((r) => json<SimState>(r)),
-  track: (dogId: string, hours = 6) => fetch(`/api/dogs/${dogId}/track?hours=${hours}`).then((r) => json<TrackPoint[]>(r)),
+  track: (dogId: string, from: number, to: number) =>
+    fetch(`/api/dogs/${dogId}/track?from=${Math.floor(from)}&to=${Math.ceil(to)}`).then((r) => json<TrackPoint[]>(r)),
   createDog: (input: Partial<Dog>) => send("POST", "/api/dogs", input).then((r) => json<Dog>(r)),
   updateDog: (id: string, input: Partial<Dog>) => send("PATCH", `/api/dogs/${id}`, input).then((r) => json<Dog>(r)),
   deleteDog: (id: string) => send("DELETE", `/api/dogs/${id}`).then((r) => json<{ ok: true }>(r)),
