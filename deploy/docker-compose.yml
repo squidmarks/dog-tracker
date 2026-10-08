@@ -19,6 +19,10 @@ services:
       MQTT_PASS: ${MQTT_PASS:?set MQTT_PASS}
       CHANNEL_PSK: ${CHANNEL_PSK:?set CHANNEL_PSK}
       DB_PATH: /data/dog-tracker.db
+      YARD_LAT: ${YARD_LAT:-}
+      YARD_LON: ${YARD_LON:-}
+      YARD_RADIUS_M: ${YARD_RADIUS_M:-40}
+      STALE_MINUTES: ${STALE_MINUTES:-20}
     volumes: [tracker-data:/data]
     depends_on: [mosquitto]
 

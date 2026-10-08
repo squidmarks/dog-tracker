@@ -2,7 +2,7 @@ import express from "express";
 import type { Db } from "./db.js";
 import type { MeshEvent } from "./decode.js";
 
-export function createApp(db: Db) {
+export function createApp(db: Db, onRename: (id: string) => void = () => {}) {
   const app = express();
   app.use(express.json());
   const streams = new Set<express.Response>();
@@ -16,7 +16,8 @@ export function createApp(db: Db) {
 
   app.patch("/api/nodes/:id", (req, res) => {
     const { name = null, color = null } = req.body ?? {};
-    db.rename(req.params.id, name, color) ? res.json({ ok: true }) : res.status(404).json({ error: "unknown node" });
+    if (db.rename(req.params.id, name, color)) { onRename(req.params.id); res.json({ ok: true }); }
+    else res.status(404).json({ error: "unknown node" });
   });
 
   // Server-sent events: the web UI refetches /api/nodes (or patches state) on each event.
