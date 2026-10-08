@@ -58,7 +58,7 @@ export default function Page() {
       } catch { /* ignore keep-alives */ }
       if (!pending) pending = setTimeout(() => { pending = null; load(); }, 1000);
     };
-    const poll = setInterval(load, 30_000);
+    const poll = setInterval(load, 10_000);
     const tick = setInterval(() => setNow(Date.now() / 1000), 15_000);
     return () => { es.close(); clearInterval(poll); clearInterval(tick); if (pending) clearTimeout(pending); };
   }, [load]);

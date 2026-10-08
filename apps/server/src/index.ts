@@ -8,7 +8,7 @@ import { createClient, startIngest } from "./ingest.js";
 import { createNotifier } from "./notify.js";
 import { serial } from "./queue.js";
 import { Monitor } from "./rules.js";
-import { startSimulator } from "./sim.js";
+import { circleArea, ringArea, startSimulator } from "./sim.js";
 
 const db = await openDb(config.mongoUrl, config.mongoDb);
 console.log(`[db] connected to Mongo database ${config.mongoDb}`);
@@ -57,8 +57,10 @@ startIngest(client, db, onNewEvent);
 if (config.simDogs > 0) {
   const centre = config.yard ?? { lat: 45.1705877, lon: -64.7541067, radiusM: 40 };
   const enqueue = serial();
+  // The simulated dogs live in your real yard zone (and follow it when you redraw it); a plain circle until one exists.
+  const getArea = () => { const ring = monitor.playRing(); return ring ? ringArea(centre, ring) : circleArea(config.yard?.radiusM ?? 40); };
   sim = startSimulator({
-    count: config.simDogs, centre, yardRadiusM: config.yard?.radiusM ?? 40, tickS: config.simTickS,
+    count: config.simDogs, centre, getArea, tickS: config.simTickS,
     apply: (ev) => enqueue(async () => { if (await db.apply(ev)) await onNewEvent(ev); }),
   });
   console.log(`[sim] ${config.simDogs} simulated trackers around ${centre.lat},${centre.lon}`);

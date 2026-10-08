@@ -1,6 +1,6 @@
 "use client";
 import * as maplibregl from "maplibre-gl";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { circleRing, distanceM } from "../lib/geo";
 import { ago, dogColor, dogEmoji, trackerLabel, type DrawState, type Dog, type Tracker, type Zone } from "../lib/types";
@@ -54,6 +54,11 @@ export function MapView({ dogs, trackers, zones, draw, focus, base, onDrawClick,
   const trackerMarkers = useRef(new Map<string, maplibregl.Marker>());
   const lastTrack = useRef(new Map<string, number>());
   const fitted = useRef(false);
+  const dogsRef = useRef(dogs);
+  dogsRef.current = dogs; // the async draw loop below must always see the latest dogs, not the ones from when it started
+  const drawing = useRef<{ running: boolean; again: boolean }>({ running: false, again: false });
+  // `isStyleLoaded()` is false whenever any tile is loading, and "load" fires only once, so gate on our own flag.
+  const [ready, setReady] = useState(false);
 
   useEffect(() => {
     if (!el.current || map.current) return;
@@ -76,6 +81,7 @@ export function MapView({ dogs, trackers, zones, draw, focus, base, onDrawClick,
     m.addControl(new maplibregl.NavigationControl());
     map.current = m;
     m.on("load", () => {
+      setReady(true);
       m.addSource("zones", { type: "geojson", data: zonesGeoJSON(live.current.zones) });
       m.addLayer({ id: "zones-fill", type: "fill", source: "zones", paint: { "fill-color": ["get", "color"], "fill-opacity": 0.16 } });
       m.addLayer({ id: "zones-line", type: "line", source: "zones", paint: { "line-color": ["get", "color"], "line-width": 2.5 } });
@@ -92,7 +98,7 @@ export function MapView({ dogs, trackers, zones, draw, focus, base, onDrawClick,
       const hit = m.queryRenderedFeatures(e.point, { layers: ["zones-fill"] })[0];
       if (hit) zoneClick(String(hit.properties?.id));
     });
-    return () => { m.remove(); map.current = null; dogMarkers.current.clear(); trackerMarkers.current.clear(); };
+    return () => { m.remove(); map.current = null; dogMarkers.current.clear(); trackerMarkers.current.clear(); setReady(false); };
   }, []);
 
   useEffect(() => {
@@ -109,29 +115,30 @@ export function MapView({ dogs, trackers, zones, draw, focus, base, onDrawClick,
       if (m.getLayer("zones-line")) m.setPaintProperty("zones-line", "line-width", base === "satellite" ? 3.5 : 2.5);
       if (m.getLayer("zones-fill")) m.setPaintProperty("zones-fill", "fill-opacity", base === "satellite" ? 0.22 : 0.16);
     };
-    if (m.isStyleLoaded()) apply(); else m.once("load", apply);
-  }, [base]);
+    if (ready) apply();
+  }, [base, ready]);
 
   useEffect(() => {
     const m = map.current;
     if (!m) return;
     const apply = () => (m.getSource("zones") as maplibregl.GeoJSONSource | undefined)?.setData(zonesGeoJSON(zones));
-    if (m.isStyleLoaded() && m.getSource("zones")) apply(); else m.once("load", apply);
-  }, [zones]);
+    if (ready) apply();
+  }, [zones, ready]);
 
   useEffect(() => {
     const m = map.current;
     if (!m) return;
     const apply = () => (m.getSource("draw") as maplibregl.GeoJSONSource | undefined)?.setData(drawGeoJSON(draw));
-    if (m.isStyleLoaded() && m.getSource("draw")) apply(); else m.once("load", apply);
+    if (ready) apply();
     m.getCanvas().style.cursor = draw ? "crosshair" : "";
-  }, [draw]);
+  }, [draw, ready]);
 
   // Dogs: marker + recent trail.
   useEffect(() => {
     const m = map.current;
     if (!m) return;
     const draw = async () => {
+      const dogs = dogsRef.current;
       const live = new Set(dogs.map((d) => d.id));
       for (const [id, mk] of dogMarkers.current) {
         if (live.has(id)) continue;
@@ -174,8 +181,16 @@ export function MapView({ dogs, trackers, zones, draw, focus, base, onDrawClick,
         fitted.current = true;
       }
     };
-    if (m.isStyleLoaded()) draw(); else m.once("load", draw);
-  }, [dogs]);
+    if (!ready) return;
+    // Run one pass at a time; if data changed meanwhile, run again once so the latest positions always land.
+    const run = async () => {
+      const st = drawing.current;
+      if (st.running) { st.again = true; return; }
+      st.running = true;
+      try { do { st.again = false; await draw(); } while (st.again); } finally { st.running = false; }
+    };
+    void run();
+  }, [dogs, ready]);
 
   // Unclaimed trackers: grey "?" pins, so you can tell which physical collar is which before naming it.
   useEffect(() => {

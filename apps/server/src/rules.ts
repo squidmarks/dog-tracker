@@ -35,6 +35,9 @@ export class Monitor {
     }
   }
 
+  /** The zone the simulator should treat as the yard: the first "home" zone, else the first zone. */
+  playRing(): [number, number][] | null { return (this.zones.find((z) => z.home) ?? this.zones[0])?.ring ?? null; }
+
   isInside(dogId: string, zoneId: string): boolean | undefined { return this.membership.isInside(`${dogId}:${zoneId}`); }
   zonesFor(dogId: string): Zone[] { return this.zones.filter((z) => appliesTo(z, dogId)); }
 
