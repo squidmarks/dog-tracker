@@ -28,6 +28,9 @@ services:
       PUSHOVER_TOKEN: ${PUSHOVER_TOKEN:-}
       PUSHOVER_USER: ${PUSHOVER_USER:-}
       PUBLIC_URL: ${PUBLIC_URL:-}
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-}
     networks: [default, platform]   # `platform` is the shared network the home Mongo lives on
     depends_on: [mosquitto]
 
