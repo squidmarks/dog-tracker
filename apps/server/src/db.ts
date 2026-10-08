@@ -25,12 +25,49 @@ interface DogDoc { _id: ObjectId; name: string; color: string | null; emoji: str
  *  "one dog per tracker, one tracker per dog". */
 interface AssignmentDoc { _id?: ObjectId; dogId: ObjectId; node: string; since: number; until: number | null; open?: true }
 
+export type AlertOn = "exit" | "enter" | "both" | "none";
+export interface Zone {
+  id: string; name: string; color: string; ring: [number, number][];
+  alertOn: AlertOn;
+  /** Counts as "home" for Home Assistant presence (the dog's device_tracker reads `home` inside it). */
+  home: boolean;
+  /** Dog ids this zone applies to; null = every dog. */
+  dogs: string[] | null;
+}
+export interface ZoneInput { name?: string; color?: string; ring?: [number, number][]; alertOn?: AlertOn; home?: boolean; dogs?: string[] | null }
+
+export type EventType = "zone_exit" | "zone_enter" | "silent" | "reporting" | "low_battery" | "battery_ok";
+export interface DogEvent {
+  id: string; ts: number; type: EventType; dogId: string; dogName: string;
+  zoneId?: string; zoneName?: string; lat?: number | null; lon?: number | null;
+  /** Worth interrupting the user for (drives push notifications and the highlighted timeline style). */
+  alert: boolean; message: string;
+}
+
+export interface Settings { staleMinutes: number; lowBatteryPct: number; fenceMarginM: number }
+export const DEFAULT_SETTINGS: Settings = { staleMinutes: 20, lowBatteryPct: 20, fenceMarginM: 5 };
+
 const DUPLICATE_KEY = 11000;
 const SIM_NODE = /^!fa[0-9a-f]{6}$/;
 const FIELDS = ["name", "color", "emoji", "breed", "notes"] as const;
 const now = () => Math.floor(Date.now() / 1000);
 
 const oid = (id: string): ObjectId | null => (ObjectId.isValid(id) && String(new ObjectId(id)) === id ? new ObjectId(id) : null);
+
+const ALERT_ON: AlertOn[] = ["exit", "enter", "both", "none"];
+function validateZone(z: ZoneInput): Omit<Zone, "id"> {
+  const name = z.name?.trim();
+  if (!name) throw new Error("A zone needs a name");
+  const ring = z.ring ?? [];
+  if (ring.length < 4) throw new Error("A zone needs at least three points");
+  const closed = ring[0][0] === ring[ring.length - 1][0] && ring[0][1] === ring[ring.length - 1][1] ? ring : [...ring, ring[0]];
+  for (const [lon, lat] of closed) {
+    if (!(lon >= -180 && lon <= 180 && lat >= -90 && lat <= 90)) throw new Error("Zone coordinates out of range");
+  }
+  const alertOn = z.alertOn ?? "exit";
+  if (!ALERT_ON.includes(alertOn)) throw new Error("alertOn must be exit, enter, both or none");
+  return { name, color: z.color ?? "#2e86ab", ring: closed, alertOn, home: z.home ?? false, dogs: z.dogs && z.dogs.length ? z.dogs : null };
+}
 
 export async function openDb(url: string, dbName: string) {
   const client = new MongoClient(url, { serverSelectionTimeoutMS: 8000 });
@@ -40,12 +77,16 @@ export async function openDb(url: string, dbName: string) {
   const positions: Collection<PositionDoc> = db.collection("positions");
   const dogsCol: Collection<DogDoc> = db.collection("dogs");
   const assignments: Collection<AssignmentDoc> = db.collection("dog_trackers");
+  const zonesCol: Collection<Omit<Zone, "id"> & { _id: ObjectId }> = db.collection("zones");
+  const eventsCol: Collection<Omit<DogEvent, "id"> & { _id: ObjectId }> = db.collection("events");
+  const settingsCol: Collection<{ _id: string } & Partial<Settings>> = db.collection("settings");
 
   await positions.createIndex({ node: 1, packet_id: 1 }, { unique: true }); // several base stations can uplink the same packet
   await positions.createIndex({ node: 1, ts: -1 });
   await assignments.createIndex({ node: 1 }, { unique: true, partialFilterExpression: { open: true } });
   await assignments.createIndex({ dogId: 1 }, { unique: true, partialFilterExpression: { open: true } });
   await assignments.createIndex({ dogId: 1, since: 1 });
+  await eventsCol.createIndex({ ts: -1 });
 
   const latestPosition = (node: string) => positions.find({ node }).sort({ ts: -1 }).limit(1).next();
 
@@ -195,6 +236,57 @@ export async function openDb(url: string, dbName: string) {
       return out;
     },
 
+    // --- zones ------------------------------------------------------------
+    async zones(): Promise<Zone[]> {
+      return (await zonesCol.find().sort({ name: 1 }).toArray()).map(({ _id, ...z }) => ({ id: String(_id), ...z }));
+    },
+    async createZone(input: ZoneInput): Promise<string> {
+      const z = validateZone(input);
+      return String((await zonesCol.insertOne({ _id: new ObjectId(), ...z })).insertedId);
+    },
+    async updateZone(id: string, input: ZoneInput): Promise<boolean> {
+      const _id = oid(id);
+      if (!_id) return false;
+      const existing = await zonesCol.findOne({ _id });
+      if (!existing) return false;
+      const { _id: _ignored, ...current } = existing;
+      await zonesCol.updateOne({ _id }, { $set: validateZone({ ...current, ...input }) });
+      return true;
+    },
+    async deleteZone(id: string): Promise<boolean> {
+      const _id = oid(id);
+      return !!_id && (await zonesCol.deleteOne({ _id })).deletedCount > 0;
+    },
+
+    // --- events -----------------------------------------------------------
+    async addEvent(e: Omit<DogEvent, "id">): Promise<DogEvent> {
+      const _id = new ObjectId();
+      await eventsCol.insertOne({ _id, ...e });
+      return { id: String(_id), ...e };
+    },
+    async events(limit = 50): Promise<DogEvent[]> {
+      const rows = await eventsCol.find().sort({ ts: -1, _id: -1 }).limit(Math.min(limit, 500)).toArray();
+      return rows.map(({ _id, ...e }) => ({ id: String(_id), ...e }));
+    },
+
+    // --- settings ---------------------------------------------------------
+    async settings(): Promise<Settings> {
+      const doc = (await settingsCol.findOne({ _id: "alerts" })) ?? {};
+      const stored = Object.fromEntries(Object.entries(doc).filter(([k, v]) => k in DEFAULT_SETTINGS && typeof v === "number"));
+      return { ...DEFAULT_SETTINGS, ...stored };
+    },
+    async updateSettings(input: Partial<Settings>): Promise<Settings> {
+      const set: Partial<Settings> = {};
+      for (const k of Object.keys(DEFAULT_SETTINGS) as (keyof Settings)[]) {
+        if (!(k in input)) continue;
+        const v = Number(input[k]);
+        if (!Number.isFinite(v) || v < 0) throw new Error(`${k} must be a non-negative number`);
+        set[k] = v;
+      }
+      if (Object.keys(set).length) await settingsCol.updateOne({ _id: "alerts" }, { $set: set }, { upsert: true });
+      return api.settings();
+    },
+
     async deleteSimNodes(): Promise<number> {
       const ids = (await nodes.find({}, { projection: { _id: 1 } }).toArray()).map((n) => n._id).filter((i) => SIM_NODE.test(i));
       if (!ids.length) return 0;
@@ -206,7 +298,7 @@ export async function openDb(url: string, dbName: string) {
     },
 
     /** Test helper: empty every collection (the app user can't drop databases, by design). */
-    wipe: async () => { await Promise.all([nodes, positions, dogsCol, assignments].map((c) => c.deleteMany({}))); },
+    wipe: async () => { await Promise.all([nodes, positions, dogsCol, assignments, zonesCol, eventsCol, settingsCol].map((c) => c.deleteMany({}))); },
     close: () => client.close(),
   };
   return api;

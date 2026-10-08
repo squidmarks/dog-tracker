@@ -18,6 +18,26 @@ export interface SimState {
   dogs: { id: string; name: string; scenario: string; silentUntil: number }[];
 }
 
+export type AlertOn = "exit" | "enter" | "both" | "none";
+export interface Zone {
+  id: string; name: string; color: string; ring: [number, number][]; alertOn: AlertOn; home: boolean; dogs: string[] | null;
+}
+export type EventType = "zone_exit" | "zone_enter" | "silent" | "reporting" | "low_battery" | "battery_ok";
+export interface DogEvent {
+  id: string; ts: number; type: EventType; dogId: string; dogName: string; zoneId?: string; zoneName?: string;
+  lat?: number | null; lon?: number | null; alert: boolean; message: string;
+}
+export interface Settings { staleMinutes: number; lowBatteryPct: number; fenceMarginM: number }
+/** Zone drawing in progress on the map. Points are [lon, lat]; a circle is [centre, edge]. */
+export interface DrawState { mode: "polygon" | "circle"; points: [number, number][]; zoneId?: string }
+
+export const EVENT_ICON: Record<EventType, string> = {
+  zone_exit: "🚪", zone_enter: "📍", silent: "📡", reporting: "✅", low_battery: "🪫", battery_ok: "🔋",
+};
+export const ALERT_LABEL: Record<AlertOn, string> = {
+  exit: "Alert when a dog leaves", enter: "Alert when a dog enters", both: "Alert on both", none: "Log only, no alerts",
+};
+
 export const PALETTE = ["#e4572e", "#2e86ab", "#76b041", "#a23b72", "#f2a541", "#17bebb", "#6c5ce7", "#8d6e63"];
 export const EMOJIS = ["🐕", "🐶", "🐩", "🦮", "🐕‍🦺", "🐾"];
 // Mongo ObjectIds end in an incrementing counter, so the last hex digits spread dogs across the palette.

@@ -1,5 +1,6 @@
 import express from "express";
-import type { Db, DogInput, DogLive } from "./db.js";
+import type { Db, DogInput, DogLive, Settings, ZoneInput } from "./db.js";
+import { circleRing } from "./geo.js";
 import type { MeshEvent } from "./decode.js";
 import { isSimNode, SCENARIOS, type Scenario, startSimulator } from "./sim.js";
 
@@ -8,6 +9,8 @@ export type Sim = ReturnType<typeof startSimulator>;
 export interface Hooks {
   onDogChanged: (id: string) => unknown;
   onDogDeleted: (id: string) => unknown;
+  /** Zones or alert settings changed. */
+  onZonesChanged: () => unknown;
   getSim: () => Sim | null;
 }
 
@@ -18,6 +21,19 @@ function dogInput(body: Record<string, unknown> | undefined): DogInput {
     if (body && k in body) (out as Record<string, unknown>)[k] = body[k] === "" ? null : body[k];
   }
   if (out.name === null) out.name = "";
+  return out;
+}
+
+/** Zone bodies may carry `circle: {lat, lon, radiusM}` instead of a ring (the "circle shortcut"). */
+function zoneInput(body: Record<string, any> | undefined): ZoneInput {
+  const out: ZoneInput = {};
+  if (!body) return out;
+  for (const k of ["name", "color", "alertOn", "home", "dogs"] as const) if (k in body) (out as any)[k] = body[k];
+  if (body.circle) {
+    const { lat, lon, radiusM } = body.circle;
+    if (![lat, lon, radiusM].every((n) => Number.isFinite(n)) || radiusM <= 0 || radiusM > 5000) throw new Error("Invalid circle");
+    out.ring = circleRing(lat, lon, radiusM);
+  } else if (body.ring) out.ring = body.ring;
   return out;
 }
 
@@ -67,6 +83,39 @@ export function createApp(db: Db, hooks: Hooks) {
     res.json(await db.dogTrack(req.params.id, Math.floor(Date.now() / 1000) - hours * 3600));
   });
 
+  // --- Zones ---
+  app.get("/api/zones", async (_req, res) => res.json(await db.zones()));
+  app.post("/api/zones", async (req, res) => {
+    try {
+      const id = await db.createZone(zoneInput(req.body));
+      await hooks.onZonesChanged();
+      res.status(201).json((await db.zones()).find((z) => z.id === id));
+    } catch (e) { res.status(400).json({ error: (e as Error).message }); }
+  });
+  app.patch("/api/zones/:id", async (req, res) => {
+    try {
+      if (!(await db.updateZone(req.params.id, zoneInput(req.body)))) return res.status(404).json({ error: "unknown zone" });
+      await hooks.onZonesChanged();
+      res.json((await db.zones()).find((z) => z.id === req.params.id));
+    } catch (e) { res.status(400).json({ error: (e as Error).message }); }
+  });
+  app.delete("/api/zones/:id", async (req, res) => {
+    if (!(await db.deleteZone(req.params.id))) return res.status(404).json({ error: "unknown zone" });
+    await hooks.onZonesChanged();
+    res.json({ ok: true });
+  });
+
+  // --- Activity (events) and alert settings ---
+  app.get("/api/events", async (req, res) => res.json(await db.events(Number(req.query.limit ?? 50))));
+  app.get("/api/settings", async (_req, res) => res.json(await db.settings()));
+  app.put("/api/settings", async (req, res) => {
+    try {
+      const s: Settings = await db.updateSettings(req.body ?? {});
+      await hooks.onZonesChanged();
+      res.json(s);
+    } catch (e) { res.status(400).json({ error: (e as Error).message }); }
+  });
+
   // --- Simulator controls (only when SIM_DOGS > 0) ---
   app.get("/api/sim", (_req, res) => {
     const sim = hooks.getSim();
@@ -94,13 +143,15 @@ export function createApp(db: Db, hooks: Hooks) {
     req.on("close", () => streams.delete(res));
   });
 
-  const broadcast = (ev: MeshEvent | { kind: "dogs" }) => {
+  const broadcast = (ev: MeshEvent | { kind: "dogs" | "zones" } | { kind: "event"; event: unknown }) => {
     for (const s of streams) s.write(`data: ${JSON.stringify(ev)}\n\n`);
   };
   // Dog edits made in one browser tab should refresh the others.
   const { onDogChanged, onDogDeleted } = hooks;
   hooks.onDogChanged = async (id) => { await onDogChanged(id); broadcast({ kind: "dogs" }); };
   hooks.onDogDeleted = async (id) => { await onDogDeleted(id); broadcast({ kind: "dogs" }); };
+  const onZonesChanged = hooks.onZonesChanged;
+  hooks.onZonesChanged = async () => { await onZonesChanged(); broadcast({ kind: "zones" }); };
 
   return { app, broadcast };
 }

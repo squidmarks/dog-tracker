@@ -2,10 +2,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { DogDialog, type DogDialogState } from "../components/DogDialog";
 import { MapView, type Focus } from "../components/MapView";
+import { SettingsDialog } from "../components/SettingsDialog";
+import { ZoneDialog, type ZoneDialogState } from "../components/ZoneDialog";
 import { api } from "../lib/api";
+import { distanceM } from "../lib/geo";
 import {
-  ago, batteryLabel, dogColor, dogEmoji, trackerLabel,
-  type Dog, type SimState, type Tracker,
+  ago, ALERT_LABEL, batteryLabel, dogColor, dogEmoji, EVENT_ICON, trackerLabel,
+  type Dog, type DogEvent, type DrawState, type SimState, type Tracker, type Zone,
 } from "../lib/types";
 
 const STALE_AFTER_S = 15 * 60;
@@ -16,14 +19,20 @@ export default function Page() {
   const [sim, setSim] = useState<SimState | null>(null);
   const [now, setNow] = useState(Date.now() / 1000);
   const [dialog, setDialog] = useState<DogDialogState | null>(null);
+  const [zones, setZones] = useState<Zone[]>([]);
+  const [events, setEvents] = useState<DogEvent[]>([]);
+  const [zoneDialog, setZoneDialog] = useState<ZoneDialogState | null>(null);
+  const [draw, setDraw] = useState<DrawState | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [toasts, setToasts] = useState<{ id: string; text: string }[]>([]);
   const [focus, setFocus] = useState<Focus | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const focusN = useRef(0);
 
   const load = useCallback(async () => {
     try {
-      const [d, t] = await Promise.all([api.dogs(), api.trackers()]);
-      setDogs(d); setTrackers(t); setLoadError(null);
+      const [d, t, z, ev] = await Promise.all([api.dogs(), api.trackers(), api.zones(), api.events(25)]);
+      setDogs(d); setTrackers(t); setZones(z); setEvents(ev); setLoadError(null);
     } catch (e) { setLoadError((e as Error).message); }
     api.sim().then(setSim).catch(() => setSim(null));
   }, []);
@@ -33,7 +42,17 @@ export default function Page() {
     load();
     let pending: ReturnType<typeof setTimeout> | null = null;
     const es = new EventSource("/api/stream");
-    es.onmessage = () => { if (!pending) pending = setTimeout(() => { pending = null; load(); }, 1000); };
+    es.onmessage = (m) => {
+      try {
+        const msg = JSON.parse(m.data);
+        if (msg.kind === "event" && msg.event?.alert) {
+          const id = msg.event.id as string;
+          setToasts((t) => [...t, { id, text: msg.event.message }]);
+          setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 10_000);
+        }
+      } catch { /* ignore keep-alives */ }
+      if (!pending) pending = setTimeout(() => { pending = null; load(); }, 1000);
+    };
     const poll = setInterval(load, 30_000);
     const tick = setInterval(() => setNow(Date.now() / 1000), 15_000);
     return () => { es.close(); clearInterval(poll); clearInterval(tick); if (pending) clearTimeout(pending); };
@@ -42,6 +61,31 @@ export default function Page() {
   const flyTo = (lat: number | null, lon: number | null) => {
     if (lat != null && lon != null) setFocus({ lat, lon, n: ++focusN.current });
   };
+
+  // --- Zone drawing ---
+  const startDraw = (mode: DrawState["mode"], zone?: Zone) => setDraw({ mode, points: [], zoneId: zone?.id });
+  const onDrawClick = (lat: number, lon: number) => setDraw((d) => {
+    if (!d) return d;
+    if (d.mode === "circle") return { ...d, points: d.points.length === 0 ? [[lon, lat]] : [d.points[0], [lon, lat]] };
+    return { ...d, points: [...d.points, [lon, lat]] };
+  });
+  const canFinish = !!draw && (draw.mode === "circle" ? draw.points.length === 2 : draw.points.length >= 3);
+  const finishDraw = async () => {
+    if (!draw || !canFinish) return;
+    const geometry = draw.mode === "circle"
+      ? { circle: { lat: draw.points[0][1], lon: draw.points[0][0], radiusM: Math.round(distanceM(draw.points[0][1], draw.points[0][0], draw.points[1][1], draw.points[1][0])) } }
+      : { ring: [...draw.points, draw.points[0]] };
+    if (draw.zoneId) {
+      try { await api.updateZone(draw.zoneId, geometry); load(); } catch (e) { alert((e as Error).message); }
+    } else setZoneDialog({ geometry });
+    setDraw(null);
+  };
+  useEffect(() => {
+    if (!draw) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setDraw(null); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [draw]);
 
   const inbox = trackers.filter((t) => t.dog_id == null && t.has_position);
   const others = trackers.filter((t) => t.dog_id == null && !t.has_position);
@@ -55,7 +99,7 @@ export default function Page() {
   return (
     <div className="app">
       <aside className="side">
-        <h1>🐕 Dog Tracker</h1>
+        <h1>🐕 Dog Tracker <button className="link gear" aria-label="Alert settings" onClick={() => setSettingsOpen(true)}>⚙ Settings</button></h1>
         {loadError && <p className="error">Can&apos;t reach the server: {loadError}</p>}
 
         {inbox.length > 0 && (
@@ -114,6 +158,35 @@ export default function Page() {
           })}
         </section>
 
+        <section>
+          <h2>Zones <span className="count">{zones.length}</span>
+            <span className="grow" />
+            <button className="link" onClick={() => startDraw("polygon")}>+ Draw</button>
+            <button className="link" onClick={() => startDraw("circle")}>+ Circle</button></h2>
+          {zones.length === 0 && <p className="meta">Draw the yard so you&apos;re alerted when a dog leaves it.</p>}
+          {zones.map((z) => (
+            <div key={z.id} className="card zone" onClick={() => setZoneDialog({ zone: z })}>
+              <b><span className="swatch" style={{ background: z.color }} />{z.name}{z.home && <span className="badge home">home</span>}</b>
+              <div className="meta">
+                {ALERT_LABEL[z.alertOn]} · {z.dogs === null ? "all dogs" : z.dogs.map((id) => dogs.find((d) => d.id === id)?.name ?? "?").join(", ")}
+              </div>
+            </div>
+          ))}
+        </section>
+
+        <section>
+          <h2>Activity</h2>
+          {events.length === 0 && <p className="meta">Nothing yet. Alerts and notable changes show up here.</p>}
+          {events.map((e) => (
+            <div key={e.id} className={`event ${e.alert ? "alert" : ""}`}
+              onClick={() => flyTo(e.lat ?? null, e.lon ?? null)}>
+              <span className="ico">{EVENT_ICON[e.type]}</span>
+              <span className="msg">{e.message}</span>
+              <span className="when">{ago(e.ts, now)}</span>
+            </div>
+          ))}
+        </section>
+
         {others.length > 0 && (
           <details className="others">
             <summary>Other devices ({others.length})</summary>
@@ -144,8 +217,27 @@ export default function Page() {
         )}
       </aside>
 
-      <MapView dogs={dogs} trackers={trackers} focus={focus} />
+      <div className="mapwrap">
+        <MapView dogs={dogs} trackers={trackers} zones={zones} draw={draw} focus={focus}
+          onDrawClick={onDrawClick} onZoneClick={(id) => { const z = zones.find((x) => x.id === id); if (z) setZoneDialog({ zone: z }); }} />
+        {draw && (
+          <div className="drawbar">
+            <span>{draw.mode === "circle"
+              ? (draw.points.length === 0 ? "Click the centre of the circle" : "Click on the edge to set the radius")
+              : `Click the map to add corners (${draw.points.length})`}</span>
+            {draw.mode === "polygon" && <button onClick={() => setDraw({ ...draw, points: draw.points.slice(0, -1) })} disabled={!draw.points.length}>Undo</button>}
+            <button className="primary" onClick={finishDraw} disabled={!canFinish}>Finish</button>
+            <button onClick={() => setDraw(null)}>Cancel</button>
+          </div>
+        )}
+        <div className="toasts">
+          {toasts.map((t) => <div key={t.id} className="toast" onClick={() => setToasts((x) => x.filter((y) => y.id !== t.id))}>⚠️ {t.text}</div>)}
+        </div>
+      </div>
       <DogDialog state={dialog} trackers={trackers} onClose={() => setDialog(null)} onSaved={load} />
+      <ZoneDialog state={zoneDialog} dogs={dogs} onClose={() => setZoneDialog(null)} onSaved={load}
+        onRedraw={(z) => startDraw("polygon", z)} />
+      <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </div>
   );
 }

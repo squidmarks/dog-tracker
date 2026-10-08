@@ -17,6 +17,5 @@ export const config = {
   // Simulated dogs (dev/demo): SIM_DOGS=2 starts two. They use node ids !fa000001+.
   simDogs: Number(process.env.SIM_DOGS ?? 0),
   simTickS: Number(process.env.SIM_TICK_S ?? 5),
-  staleMinutes: Number(process.env.STALE_MINUTES ?? 20),
   gpsAccuracyM: Number(process.env.GPS_ACCURACY_M ?? 15),
 };

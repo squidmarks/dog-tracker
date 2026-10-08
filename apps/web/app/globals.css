@@ -49,3 +49,25 @@ button.danger { color: #d64545; border-color: #d64545; }
 .actions button:disabled { opacity: .5; cursor: default; }
 .spacer { flex: 1; }
 .hint { font-size: 12px; color: var(--muted); margin: 0 0 8px; }
+
+h1 { display: flex; align-items: center; gap: 8px; }
+.gear { font-size: 12px; }
+.grow { flex: 1; }
+h2 button.link { margin-left: 0; }
+.mapwrap { position: relative; height: 100%; width: 100%; }
+.swatch { width: 14px; height: 14px; border-radius: 4px; display: inline-block; flex: none; }
+.badge.home { background: #17bebb; }
+.card.zone b { font-weight: 600; }
+.event { display: flex; gap: 8px; align-items: baseline; padding: 6px 8px; margin-bottom: 4px; border-radius: 8px; font-size: 13px; cursor: pointer; border-left: 3px solid transparent; }
+.event.alert { background: #d6454522; border-left-color: #d64545; }
+.event .msg { flex: 1; }
+.event .when { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.drawbar { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); display: flex; gap: 8px; align-items: center; background: var(--bg); color: var(--fg); padding: 8px 12px; border-radius: 10px; box-shadow: 0 2px 12px #0005; font-size: 14px; z-index: 5; }
+.drawbar button { font: inherit; padding: 5px 12px; border-radius: 8px; border: 1px solid var(--muted); background: var(--card); color: var(--fg); cursor: pointer; }
+.drawbar button.primary { background: #2e86ab; color: #fff; border-color: #2e86ab; }
+.drawbar button:disabled { opacity: .5; cursor: default; }
+.toasts { position: absolute; bottom: 24px; right: 16px; display: flex; flex-direction: column; gap: 8px; z-index: 6; max-width: 320px; }
+.toast { background: #d64545; color: #fff; padding: 10px 14px; border-radius: 10px; box-shadow: 0 2px 12px #0006; cursor: pointer; font-size: 14px; }
+.dialog label.check { display: flex; align-items: center; gap: 8px; color: var(--fg); font-size: 14px; }
+.dialog label.check input { width: auto; margin: 0; }
+.dialog label.check.indent { margin-left: 22px; }

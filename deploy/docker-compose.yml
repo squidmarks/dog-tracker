@@ -23,7 +23,9 @@ services:
       YARD_LAT: ${YARD_LAT:-}
       YARD_LON: ${YARD_LON:-}
       YARD_RADIUS_M: ${YARD_RADIUS_M:-40}
-      STALE_MINUTES: ${STALE_MINUTES:-20}
+      PUSHOVER_TOKEN: ${PUSHOVER_TOKEN:-}
+      PUSHOVER_USER: ${PUSHOVER_USER:-}
+      PUBLIC_URL: ${PUBLIC_URL:-}
     networks: [default, platform]   # `platform` is the shared network the home Mongo lives on
     depends_on: [mosquitto]
 
