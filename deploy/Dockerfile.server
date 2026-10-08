@@ -1,0 +1,8 @@
+FROM node:22-slim
+WORKDIR /app
+COPY package.json package-lock.json ./
+COPY apps/server/package.json apps/server/
+RUN npm ci --workspace @dog-tracker/server
+COPY apps/server apps/server
+WORKDIR /app/apps/server
+CMD ["npx", "tsx", "src/index.ts"]

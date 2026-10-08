@@ -1,0 +1,14 @@
+:root { color-scheme: light dark; --bg: #fff; --fg: #111; --muted: #6b7280; --card: #f3f4f6; }
+@media (prefers-color-scheme: dark) { :root { --bg: #111418; --fg: #e8eaed; --muted: #9aa0a6; --card: #1d2229; } }
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font: 15px system-ui, sans-serif; }
+.app { display: grid; grid-template-columns: 300px 1fr; height: 100dvh; }
+.side { padding: 16px; overflow: auto; border-right: 1px solid var(--card); }
+.side h1 { font-size: 18px; margin: 0 0 12px; }
+.dog { background: var(--card); border-radius: 10px; padding: 12px; margin-bottom: 10px; cursor: pointer; }
+.dog b { display: flex; align-items: center; gap: 8px; }
+.dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.meta { color: var(--muted); font-size: 13px; margin-top: 4px; }
+.stale { color: #d97706; }
+.map { height: 100%; width: 100%; }
+@media (max-width: 720px) { .app { grid-template-columns: 1fr; grid-template-rows: auto 1fr; } .side { border: 0; max-height: 40dvh; } }

@@ -1,0 +1,35 @@
+# Runs on `home`. Create the broker password file first:
+#   docker run --rm -v $PWD:/w eclipse-mosquitto mosquitto_passwd -c -b /w/passwd meshtastic <password>
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    restart: unless-stopped
+    ports: ["1883:1883"]
+    volumes:
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./passwd:/mosquitto/config/passwd:ro
+      - mosquitto-data:/mosquitto/data
+
+  server:
+    build: { context: .., dockerfile: deploy/Dockerfile.server }
+    restart: unless-stopped
+    environment:
+      MQTT_URL: mqtt://mosquitto:1883
+      MQTT_USER: ${MQTT_USER:-meshtastic}
+      MQTT_PASS: ${MQTT_PASS:?set MQTT_PASS}
+      CHANNEL_PSK: ${CHANNEL_PSK:?set CHANNEL_PSK}
+      DB_PATH: /data/dog-tracker.db
+    volumes: [tracker-data:/data]
+    depends_on: [mosquitto]
+
+  web:
+    build: { context: .., dockerfile: deploy/Dockerfile.web }
+    restart: unless-stopped
+    environment:
+      API_URL: http://server:4000
+    ports: ["3000:3000"]
+    depends_on: [server]
+
+volumes:
+  mosquitto-data:
+  tracker-data:
