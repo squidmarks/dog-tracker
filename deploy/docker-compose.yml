@@ -18,12 +18,13 @@ services:
       MQTT_USER: ${MQTT_USER:-meshtastic}
       MQTT_PASS: ${MQTT_PASS:?set MQTT_PASS}
       CHANNEL_PSK: ${CHANNEL_PSK:?set CHANNEL_PSK}
-      DB_PATH: /data/dog-tracker.db
+      MONGO_URL: mongodb://${MONGO_USER:?set MONGO_USER}:${MONGO_PASSWORD:?set MONGO_PASSWORD}@mongo-mongo-1:27017/?authSource=admin
+      MONGO_DB: dogtracker
       YARD_LAT: ${YARD_LAT:-}
       YARD_LON: ${YARD_LON:-}
       YARD_RADIUS_M: ${YARD_RADIUS_M:-40}
       STALE_MINUTES: ${STALE_MINUTES:-20}
-    volumes: [tracker-data:/data]
+    networks: [default, platform]   # `platform` is the shared network the home Mongo lives on
     depends_on: [mosquitto]
 
   web:
@@ -36,4 +37,7 @@ services:
 
 volumes:
   mosquitto-data:
-  tracker-data:
+
+networks:
+  platform:
+    external: true

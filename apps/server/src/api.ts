@@ -6,8 +6,8 @@ import { isSimNode, SCENARIOS, type Scenario, startSimulator } from "./sim.js";
 export type Sim = ReturnType<typeof startSimulator>;
 
 export interface Hooks {
-  onDogChanged: (id: number) => void;
-  onDogDeleted: (id: number) => void;
+  onDogChanged: (id: string) => unknown;
+  onDogDeleted: (id: string) => unknown;
   getSim: () => Sim | null;
 }
 
@@ -29,42 +29,42 @@ export function createApp(db: Db, hooks: Hooks) {
   const dogSim = (d: DogLive) => ({ ...d, sim: isSimNode(d.tracker ?? "") });
 
   // --- Trackers: every radio heard on the channel; the unclaimed ones with a GPS fix are the "inbox" ---
-  app.get("/api/trackers", (_req, res) => res.json((db.trackers() as { id: string }[]).map((t) => ({ ...t, sim: isSimNode(t.id) }))));
+  app.get("/api/trackers", async (_req, res) => res.json((await db.trackers()).map((t) => ({ ...t, sim: isSimNode(t.id) }))));
 
   // --- Dogs ---
-  app.get("/api/dogs", (_req, res) => res.json(db.dogs().map(dogSim)));
+  app.get("/api/dogs", async (_req, res) => res.json((await db.dogs()).map(dogSim)));
 
-  app.post("/api/dogs", (req, res) => {
+  app.post("/api/dogs", async (req, res) => {
     try {
-      const id = db.createDog(dogInput(req.body));
-      hooks.onDogChanged(id);
-      res.status(201).json(dogSim(db.dog(id)!));
+      const id = await db.createDog(dogInput(req.body));
+      await hooks.onDogChanged(id);
+      res.status(201).json(dogSim((await db.dog(id))!));
     } catch (e) {
       res.status(409).json({ error: (e as Error).message });
     }
   });
 
-  app.patch("/api/dogs/:id", (req, res) => {
-    const id = Number(req.params.id);
+  app.patch("/api/dogs/:id", async (req, res) => {
+    const id = req.params.id;
     try {
-      if (!db.updateDog(id, dogInput(req.body))) return res.status(404).json({ error: "unknown dog" });
-      hooks.onDogChanged(id);
-      res.json(dogSim(db.dog(id)!));
+      if (!(await db.updateDog(id, dogInput(req.body)))) return res.status(404).json({ error: "unknown dog" });
+      await hooks.onDogChanged(id);
+      res.json(dogSim((await db.dog(id))!));
     } catch (e) {
       res.status(409).json({ error: (e as Error).message });
     }
   });
 
-  app.delete("/api/dogs/:id", (req, res) => {
-    const id = Number(req.params.id);
-    if (!db.deleteDog(id)) return res.status(404).json({ error: "unknown dog" });
-    hooks.onDogDeleted(id);
+  app.delete("/api/dogs/:id", async (req, res) => {
+    const id = req.params.id;
+    if (!(await db.deleteDog(id))) return res.status(404).json({ error: "unknown dog" });
+    await hooks.onDogDeleted(id);
     res.json({ ok: true });
   });
 
-  app.get("/api/dogs/:id/track", (req, res) => {
+  app.get("/api/dogs/:id/track", async (req, res) => {
     const hours = Math.min(Number(req.query.hours ?? 24), 24 * 30);
-    res.json(db.dogTrack(Number(req.params.id), Math.floor(Date.now() / 1000) - hours * 3600));
+    res.json(await db.dogTrack(req.params.id, Math.floor(Date.now() / 1000) - hours * 3600));
   });
 
   // --- Simulator controls (only when SIM_DOGS > 0) ---
@@ -80,8 +80,8 @@ export function createApp(db: Db, hooks: Hooks) {
     const minutes = Number(req.query.minutes ?? 30);
     sim.trigger(req.params.id, scenario, minutes) ? res.json({ ok: true }) : res.status(404).json({ error: "unknown sim tracker" });
   });
-  app.delete("/api/sim/nodes", (_req, res) => {
-    const removed = db.deleteSimNodes();
+  app.delete("/api/sim/nodes", async (_req, res) => {
+    const removed = await db.deleteSimNodes();
     res.json({ removed });
   });
 
@@ -99,8 +99,8 @@ export function createApp(db: Db, hooks: Hooks) {
   };
   // Dog edits made in one browser tab should refresh the others.
   const { onDogChanged, onDogDeleted } = hooks;
-  hooks.onDogChanged = (id) => { onDogChanged(id); broadcast({ kind: "dogs" }); };
-  hooks.onDogDeleted = (id) => { onDogDeleted(id); broadcast({ kind: "dogs" }); };
+  hooks.onDogChanged = async (id) => { await onDogChanged(id); broadcast({ kind: "dogs" }); };
+  hooks.onDogDeleted = async (id) => { await onDogDeleted(id); broadcast({ kind: "dogs" }); };
 
   return { app, broadcast };
 }

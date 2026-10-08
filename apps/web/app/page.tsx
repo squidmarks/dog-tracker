@@ -48,7 +48,7 @@ export default function Page() {
 
   const assign = async (t: Tracker, dogId: string) => {
     if (!dogId) return;
-    try { await api.updateDog(Number(dogId), { tracker: t.id }); load(); }
+    try { await api.updateDog(dogId, { tracker: t.id }); load(); }
     catch (e) { alert((e as Error).message); }
   };
 

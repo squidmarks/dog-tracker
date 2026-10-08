@@ -1,9 +1,7 @@
-import Database from "better-sqlite3";
-import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { type Collection, MongoClient, MongoServerError, ObjectId } from "mongodb";
 import type { MeshEvent } from "./decode.js";
 
-export type Db = ReturnType<typeof openDb>;
+export type Db = Awaited<ReturnType<typeof openDb>>;
 
 export interface DogInput {
   name?: string; color?: string | null; emoji?: string | null; breed?: string | null; notes?: string | null;
@@ -11,176 +9,205 @@ export interface DogInput {
 }
 
 /** A dog with its tracker's live state (see dogs()). */
-export interface DogLive { id: number; name: string; tracker: string | null; [k: string]: unknown }
+export interface DogLive { id: string; name: string; tracker: string | null; [k: string]: unknown }
 
-/** Latest-position join shared by the dog and tracker listings. */
-const LIVE = `
-  n.battery, n.voltage, n.last_heard, n.long_name, n.short_name,
-  p.lat, p.lon, p.ts AS pos_ts, p.speed, p.sats, p.gateway, p.rssi, p.snr
-  FROM nodes n
-  LEFT JOIN positions p ON p.id = (SELECT id FROM positions WHERE node = n.id ORDER BY ts DESC LIMIT 1)`;
+interface NodeDoc {
+  _id: string; long_name?: string | null; short_name?: string | null;
+  battery?: number | null; voltage?: number | null; last_heard?: number;
+}
+interface PositionDoc {
+  node: string; packet_id: number; ts: number; lat: number; lon: number;
+  alt: number | null; speed: number | null; sats: number | null; gateway: string | null; rssi: number | null; snr: number | null;
+}
+interface DogDoc { _id: ObjectId; name: string; color: string | null; emoji: string | null; breed: string | null; notes: string | null; created_at: number }
+/** Assignment history: a dog's track is the positions of whichever tracker it carried at the time.
+ *  `open: true` marks the current assignment (and is unset on close) so partial unique indexes can enforce
+ *  "one dog per tracker, one tracker per dog". */
+interface AssignmentDoc { _id?: ObjectId; dogId: ObjectId; node: string; since: number; until: number | null; open?: true }
 
-export function openDb(path: string) {
-  if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
-  const db = new Database(path);
-  db.pragma("journal_mode = WAL");
-  db.pragma("foreign_keys = ON");
-  db.exec(`
-    -- A tracker is the radio hardware, discovered automatically from mesh traffic.
-    CREATE TABLE IF NOT EXISTS nodes (
-      id TEXT PRIMARY KEY,
-      long_name TEXT, short_name TEXT,
-      name TEXT, color TEXT,  -- legacy (pre-dogs); unused
-      battery INTEGER, voltage REAL,
-      last_heard INTEGER
-    );
-    CREATE TABLE IF NOT EXISTS positions (
-      id INTEGER PRIMARY KEY,
-      node TEXT NOT NULL, packet_id INTEGER NOT NULL,
-      ts INTEGER NOT NULL,
-      lat REAL NOT NULL, lon REAL NOT NULL, alt REAL, speed REAL, sats INTEGER,
-      gateway TEXT, rssi REAL, snr REAL,
-      UNIQUE (node, packet_id)  -- several base stations can uplink the same packet
-    );
-    CREATE INDEX IF NOT EXISTS positions_node_ts ON positions (node, ts);
+const DUPLICATE_KEY = 11000;
+const SIM_NODE = /^!fa[0-9a-f]{6}$/;
+const FIELDS = ["name", "color", "emoji", "breed", "notes"] as const;
+const now = () => Math.floor(Date.now() / 1000);
 
-    -- A dog is what the user cares about; it carries a tracker, and can be re-linked to a new one.
-    CREATE TABLE IF NOT EXISTS dogs (
-      id INTEGER PRIMARY KEY,
-      name TEXT NOT NULL, color TEXT, emoji TEXT, breed TEXT, notes TEXT,
-      created_at INTEGER NOT NULL
-    );
-    -- Assignment history: a dog's track is the positions of whichever tracker it carried at the time.
-    CREATE TABLE IF NOT EXISTS dog_trackers (
-      id INTEGER PRIMARY KEY,
-      dog_id INTEGER NOT NULL REFERENCES dogs(id) ON DELETE CASCADE,
-      node TEXT NOT NULL,
-      since INTEGER NOT NULL, until INTEGER
-    );
-    CREATE UNIQUE INDEX IF NOT EXISTS one_open_per_node ON dog_trackers (node) WHERE until IS NULL;
-    CREATE UNIQUE INDEX IF NOT EXISTS one_open_per_dog ON dog_trackers (dog_id) WHERE until IS NULL;
-  `);
+const oid = (id: string): ObjectId | null => (ObjectId.isValid(id) && String(new ObjectId(id)) === id ? new ObjectId(id) : null);
 
-  const touch = db.prepare(`INSERT INTO nodes (id, last_heard) VALUES (?, ?)
-    ON CONFLICT(id) DO UPDATE SET last_heard = max(coalesce(last_heard, 0), excluded.last_heard)`);
-  const insPos = db.prepare(`INSERT OR IGNORE INTO positions
-    (node, packet_id, ts, lat, lon, alt, speed, sats, gateway, rssi, snr)
-    VALUES (@node, @packetId, @ts, @lat, @lon, @alt, @speed, @sats, @gateway, @rssi, @snr)`);
-  const setInfo = db.prepare("UPDATE nodes SET long_name = ?, short_name = ? WHERE id = ?");
-  const setTelem = db.prepare("UPDATE nodes SET battery = ?, voltage = ? WHERE id = ?");
+export async function openDb(url: string, dbName: string) {
+  const client = new MongoClient(url, { serverSelectionTimeoutMS: 8000 });
+  await client.connect();
+  const db = client.db(dbName);
+  const nodes: Collection<NodeDoc> = db.collection("nodes");
+  const positions: Collection<PositionDoc> = db.collection("positions");
+  const dogsCol: Collection<DogDoc> = db.collection("dogs");
+  const assignments: Collection<AssignmentDoc> = db.collection("dog_trackers");
 
-  const now = () => Math.floor(Date.now() / 1000);
-  const dogByNode = db.prepare("SELECT dog_id FROM dog_trackers WHERE node = ? AND until IS NULL");
+  await positions.createIndex({ node: 1, packet_id: 1 }, { unique: true }); // several base stations can uplink the same packet
+  await positions.createIndex({ node: 1, ts: -1 });
+  await assignments.createIndex({ node: 1 }, { unique: true, partialFilterExpression: { open: true } });
+  await assignments.createIndex({ dogId: 1 }, { unique: true, partialFilterExpression: { open: true } });
+  await assignments.createIndex({ dogId: 1, since: 1 });
+
+  const latestPosition = (node: string) => positions.find({ node }).sort({ ts: -1 }).limit(1).next();
+
+  const liveFields = (n: NodeDoc | null, p: PositionDoc | null) => ({
+    battery: n?.battery ?? null, voltage: n?.voltage ?? null, last_heard: n?.last_heard ?? null,
+    lat: p?.lat ?? null, lon: p?.lon ?? null, pos_ts: p?.ts ?? null, speed: p?.speed ?? null, sats: p?.sats ?? null,
+    gateway: p?.gateway ?? null, rssi: p?.rssi ?? null, snr: p?.snr ?? null,
+  });
 
   /** Point a dog at a tracker, closing its previous assignment. Throws if another dog has the tracker. */
-  const assign = db.transaction((dogId: number, node: string, at: number) => {
-    const holder = db.prepare(`SELECT d.id, d.name FROM dog_trackers dt JOIN dogs d ON d.id = dt.dog_id
-      WHERE dt.node = ? AND dt.until IS NULL`).get(node) as { id: number; name: string } | undefined;
-    if (holder?.id === dogId) return;
-    if (holder) throw new Error(`Tracker ${node} already belongs to ${holder.name}`);
-    if (!db.prepare("SELECT 1 FROM nodes WHERE id = ?").get(node)) throw new Error(`Unknown tracker ${node}`);
-    db.prepare("UPDATE dog_trackers SET until = ? WHERE dog_id = ? AND until IS NULL").run(at, dogId);
+  async function assign(dogId: ObjectId, node: string, at: number) {
+    const holder = await assignments.findOne({ node, open: true });
+    if (holder?.dogId.equals(dogId)) return;
+    if (holder) {
+      const other = await dogsCol.findOne({ _id: holder.dogId });
+      throw new Error(`Tracker ${node} already belongs to ${other?.name ?? "another dog"}`);
+    }
+    if (!(await nodes.findOne({ _id: node }))) throw new Error(`Unknown tracker ${node}`);
     // A dog's first tracker brings its pre-claim history (the dog was created when the tracker showed up);
     // a replacement collar only counts from the hand-over, so a day on the charger isn't the dog's track.
-    const first = !db.prepare("SELECT 1 FROM dog_trackers WHERE dog_id = ?").get(dogId);
-    db.prepare("INSERT INTO dog_trackers (dog_id, node, since) VALUES (?, ?, ?)").run(dogId, node, first ? 0 : at);
-  });
-  const unassign = (dogId: number, at: number) =>
-    db.prepare("UPDATE dog_trackers SET until = ? WHERE dog_id = ? AND until IS NULL").run(at, dogId);
+    const first = !(await assignments.findOne({ dogId }));
+    const previous = await assignments.findOne({ dogId, open: true });
+    if (previous) await assignments.updateOne({ _id: previous._id }, { $set: { until: at }, $unset: { open: "" } });
+    try {
+      await assignments.insertOne({ dogId, node, since: first ? 0 : at, until: null, open: true });
+    } catch (e) {
+      if (previous) await assignments.updateOne({ _id: previous._id }, { $set: { open: true, until: null } }); // restore
+      if (e instanceof MongoServerError && e.code === DUPLICATE_KEY) throw new Error(`Tracker ${node} was just claimed by another dog`);
+      throw e;
+    }
+  }
+  const unassign = (dogId: ObjectId, at: number) =>
+    assignments.updateMany({ dogId, open: true }, { $set: { until: at }, $unset: { open: "" } });
 
-  const FIELDS = ["name", "color", "emoji", "breed", "notes"] as const;
-
-  return {
-    raw: db,
+  const api = {
     /** Apply an event. Returns true when it was new (not a duplicate uplink). */
-    apply(ev: MeshEvent, at = now()): boolean {
-      touch.run(ev.node, at);
+    async apply(ev: MeshEvent, at = now()): Promise<boolean> {
+      await nodes.updateOne({ _id: ev.node }, { $max: { last_heard: at } }, { upsert: true });
       switch (ev.kind) {
         case "position":
-          return insPos.run(ev).changes > 0;
+          try {
+            await positions.insertOne({
+              node: ev.node, packet_id: ev.packetId, ts: ev.ts, lat: ev.lat, lon: ev.lon, alt: ev.alt, speed: ev.speed,
+              sats: ev.sats, gateway: ev.gateway, rssi: ev.rssi, snr: ev.snr,
+            });
+            return true;
+          } catch (e) {
+            if (e instanceof MongoServerError && e.code === DUPLICATE_KEY) return false;
+            throw e;
+          }
         case "nodeinfo":
-          setInfo.run(ev.longName, ev.shortName, ev.node);
+          await nodes.updateOne({ _id: ev.node }, { $set: { long_name: ev.longName, short_name: ev.shortName } });
           return true;
         case "telemetry":
           // 101 = "powered/charging" in Meshtastic; keep it, the UI interprets it.
-          setTelem.run(ev.battery, ev.voltage, ev.node);
+          await nodes.updateOne({ _id: ev.node }, { $set: { battery: ev.battery, voltage: ev.voltage } });
           return true;
       }
     },
 
     // --- trackers ---------------------------------------------------------
     /** Every node heard, with its latest position and which dog (if any) carries it. */
-    trackers() {
-      return db.prepare(`
-        SELECT n.id, ${LIVE.replace("FROM nodes n", `,
-          EXISTS (SELECT 1 FROM positions WHERE node = n.id) AS has_position,
-          dt.dog_id, d.name AS dog_name
-        FROM nodes n
-        LEFT JOIN dog_trackers dt ON dt.node = n.id AND dt.until IS NULL
-        LEFT JOIN dogs d ON d.id = dt.dog_id`)}
-        ORDER BY n.last_heard DESC`).all();
+    async trackers() {
+      const [all, open, dogs] = await Promise.all([
+        nodes.find().sort({ last_heard: -1 }).toArray(),
+        assignments.find({ open: true }).toArray(),
+        dogsCol.find().toArray(),
+      ]);
+      return Promise.all(all.map(async (n) => {
+        const p = await latestPosition(n._id);
+        const a = open.find((x) => x.node === n._id);
+        const dog = a && dogs.find((d) => d._id.equals(a.dogId));
+        return {
+          id: n._id, long_name: n.long_name ?? null, short_name: n.short_name ?? null, ...liveFields(n, p),
+          has_position: !!p, dog_id: dog ? String(dog._id) : null, dog_name: dog?.name ?? null,
+        };
+      }));
     },
-    dogIdForNode(node: string): number | null {
-      return (dogByNode.get(node) as { dog_id: number } | undefined)?.dog_id ?? null;
+    async dogIdForNode(node: string): Promise<string | null> {
+      const a = await assignments.findOne({ node, open: true });
+      return a ? String(a.dogId) : null;
     },
 
     // --- dogs -------------------------------------------------------------
-    dogs() {
-      return db.prepare(`
-        SELECT d.id, d.name, d.color, d.emoji, d.breed, d.notes, d.created_at, dt.node AS tracker,
-          n.battery, n.voltage, n.last_heard,
-          p.lat, p.lon, p.ts AS pos_ts, p.speed, p.sats, p.gateway, p.rssi, p.snr
-        FROM dogs d
-        LEFT JOIN dog_trackers dt ON dt.dog_id = d.id AND dt.until IS NULL
-        LEFT JOIN nodes n ON n.id = dt.node
-        LEFT JOIN positions p ON p.id = (SELECT id FROM positions WHERE node = n.id ORDER BY ts DESC LIMIT 1)
-        ORDER BY d.name COLLATE NOCASE`).all() as DogLive[];
+    async dogs(): Promise<DogLive[]> {
+      const [all, open] = await Promise.all([
+        dogsCol.find().collation({ locale: "en", strength: 2 }).sort({ name: 1 }).toArray(),
+        assignments.find({ open: true }).toArray(),
+      ]);
+      return Promise.all(all.map(async (d) => {
+        const node = open.find((a) => a.dogId.equals(d._id))?.node ?? null;
+        const [n, p] = node ? await Promise.all([nodes.findOne({ _id: node }), latestPosition(node)]) : [null, null];
+        return { id: String(d._id), name: d.name, color: d.color, emoji: d.emoji, breed: d.breed, notes: d.notes,
+          created_at: d.created_at, tracker: node, ...liveFields(n, p) };
+      }));
     },
-    dog(id: number): DogLive | undefined {
-      return this.dogs().find((d) => d.id === id);
+    async dog(id: string): Promise<DogLive | undefined> {
+      return (await api.dogs()).find((d) => d.id === id);
     },
-    createDog(input: DogInput, at = now()): number {
+    async createDog(input: DogInput, at = now()): Promise<string> {
       const name = input.name?.trim();
       if (!name) throw new Error("A dog needs a name");
-      return db.transaction(() => {
-        const id = Number(db.prepare(`INSERT INTO dogs (name, color, emoji, breed, notes, created_at)
-          VALUES (?, ?, ?, ?, ?, ?)`).run(name, input.color ?? null, input.emoji ?? null,
-          input.breed ?? null, input.notes ?? null, at).lastInsertRowid);
-        if (input.tracker) assign(id, input.tracker, at);
-        return id;
-      })();
+      const { insertedId } = await dogsCol.insertOne({
+        _id: new ObjectId(), name, color: input.color ?? null, emoji: input.emoji ?? null,
+        breed: input.breed ?? null, notes: input.notes ?? null, created_at: at,
+      });
+      if (input.tracker) {
+        try { await assign(insertedId, input.tracker, at); }
+        catch (e) { await dogsCol.deleteOne({ _id: insertedId }); throw e; } // no half-created dog
+      }
+      return String(insertedId);
     },
     /** Partial update. `tracker: null` unlinks; `tracker: "!id"` links (or swaps to) that tracker. */
-    updateDog(id: number, input: DogInput, at = now()): boolean {
-      return db.transaction(() => {
-        if (!db.prepare("SELECT 1 FROM dogs WHERE id = ?").get(id)) return false;
-        for (const f of FIELDS) {
-          if (!(f in input)) continue;
-          const v = input[f] ?? null;
-          if (f === "name" && !String(v ?? "").trim()) throw new Error("A dog needs a name");
-          db.prepare(`UPDATE dogs SET ${f} = ? WHERE id = ?`).run(typeof v === "string" ? v.trim() : v, id);
+    async updateDog(id: string, input: DogInput, at = now()): Promise<boolean> {
+      const _id = oid(id);
+      if (!_id || !(await dogsCol.findOne({ _id }))) return false;
+      const set: Record<string, unknown> = {};
+      for (const f of FIELDS) {
+        if (!(f in input)) continue;
+        const v = input[f] ?? null;
+        if (f === "name" && !String(v ?? "").trim()) throw new Error("A dog needs a name");
+        set[f] = typeof v === "string" ? v.trim() : v;
+      }
+      // Tracker first: if it fails (already claimed), nothing else has changed.
+      if ("tracker" in input) { if (input.tracker) await assign(_id, input.tracker, at); else await unassign(_id, at); }
+      if (Object.keys(set).length) await dogsCol.updateOne({ _id }, { $set: set });
+      return true;
+    },
+    async deleteDog(id: string): Promise<boolean> {
+      const _id = oid(id);
+      if (!_id) return false;
+      const { deletedCount } = await dogsCol.deleteOne({ _id });
+      await assignments.deleteMany({ dogId: _id });
+      return deletedCount > 0;
+    },
+    async dogTrack(id: string, sinceTs: number) {
+      const _id = oid(id);
+      if (!_id) return [];
+      const out: { ts: number; lat: number; lon: number; speed: number | null }[] = [];
+      for (const a of await assignments.find({ dogId: _id }).sort({ since: 1 }).toArray()) {
+        const ts: Record<string, number> = { $gte: Math.max(a.since, sinceTs) };
+        if (a.until != null) ts.$lte = a.until;
+        for (const p of await positions.find({ node: a.node, ts }).sort({ ts: 1 }).toArray()) {
+          out.push({ ts: p.ts, lat: p.lat, lon: p.lon, speed: p.speed });
         }
-        if ("tracker" in input) input.tracker ? assign(id, input.tracker, at) : unassign(id, at);
-        return true;
-      })();
-    },
-    deleteDog(id: number): boolean {
-      return db.prepare("DELETE FROM dogs WHERE id = ?").run(id).changes > 0;
-    },
-    dogTrack(id: number, sinceTs: number) {
-      return db.prepare(`
-        SELECT p.ts, p.lat, p.lon, p.speed FROM positions p
-        JOIN dog_trackers dt ON dt.node = p.node AND dt.dog_id = ?
-          AND p.ts >= dt.since AND (dt.until IS NULL OR p.ts <= dt.until)
-        WHERE p.ts >= ? ORDER BY p.ts`).all(id, sinceTs);
+      }
+      return out;
     },
 
-    deleteSimNodes() {
-      const glob = "'!fa[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'";
-      db.exec(`DELETE FROM dogs WHERE id IN (SELECT dog_id FROM dog_trackers WHERE node GLOB ${glob});
-               DELETE FROM dog_trackers WHERE node GLOB ${glob};
-               DELETE FROM positions WHERE node GLOB ${glob}`);
-      return db.prepare(`DELETE FROM nodes WHERE id GLOB ${glob}`).run().changes;
+    async deleteSimNodes(): Promise<number> {
+      const ids = (await nodes.find({}, { projection: { _id: 1 } }).toArray()).map((n) => n._id).filter((i) => SIM_NODE.test(i));
+      if (!ids.length) return 0;
+      const dogIds = (await assignments.find({ node: { $in: ids } }).toArray()).map((a) => a.dogId);
+      await dogsCol.deleteMany({ _id: { $in: dogIds } });
+      await assignments.deleteMany({ node: { $in: ids } });
+      await positions.deleteMany({ node: { $in: ids } });
+      return (await nodes.deleteMany({ _id: { $in: ids } })).deletedCount;
     },
+
+    /** Test helper: empty every collection (the app user can't drop databases, by design). */
+    wipe: async () => { await Promise.all([nodes, positions, dogsCol, assignments].map((c) => c.deleteMany({}))); },
+    close: () => client.close(),
   };
+  return api;
 }

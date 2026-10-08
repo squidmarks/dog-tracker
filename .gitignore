@@ -8,3 +8,4 @@ data
 .env.local
 .DS_Store
 apps/web/public/maplibre-gl-worker.mjs
+*.tsbuildinfo

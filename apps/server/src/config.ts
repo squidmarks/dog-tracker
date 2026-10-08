@@ -6,7 +6,9 @@ export const config = {
   mqttTopic: process.env.MQTT_TOPIC ?? "msh/#",
   // Channel PSK as base64 (what `meshtastic --info` / the app shows). "AQ==" is the default key.
   channelPsk: process.env.CHANNEL_PSK ?? "AQ==",
-  dbPath: process.env.DB_PATH ?? "./data/dog-tracker.db",
+  // Mongo: user needs readWrite on the database. authSource=admin when the user lives in admin.
+  mongoUrl: process.env.MONGO_URL ?? "mongodb://127.0.0.1:27018",
+  mongoDb: process.env.MONGO_DB ?? "dogtracker",
   port: Number(process.env.PORT ?? 4000),
   // Yard geofence (circle). Leave unset to skip the in-yard sensors.
   yard: process.env.YARD_LAT && process.env.YARD_LON

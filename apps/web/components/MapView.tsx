@@ -15,9 +15,9 @@ export interface Focus { lat: number; lon: number; n: number }
 export function MapView({ dogs, trackers, focus }: { dogs: Dog[]; trackers: Tracker[]; focus: Focus | null }) {
   const el = useRef<HTMLDivElement>(null);
   const map = useRef<maplibregl.Map | null>(null);
-  const dogMarkers = useRef(new Map<number, maplibregl.Marker>());
+  const dogMarkers = useRef(new Map<string, maplibregl.Marker>());
   const trackerMarkers = useRef(new Map<string, maplibregl.Marker>());
-  const lastTrack = useRef(new Map<number, number>());
+  const lastTrack = useRef(new Map<string, number>());
   const fitted = useRef(false);
 
   useEffect(() => {

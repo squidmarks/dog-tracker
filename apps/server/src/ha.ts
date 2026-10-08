@@ -7,10 +7,10 @@ const PREFIX = "dogtracker";
 export const STATUS_TOPIC = `${PREFIX}/status`;
 
 /** Home Assistant entities hang off the DOG (not the radio), so they survive a collar swap. */
-const slug = (dogId: number) => `dog${dogId}`;
+const slug = (dogId: string) => `dog${dogId}`;
 
 interface DogRow {
-  id: number; name: string; emoji: string | null;
+  id: string; name: string; emoji: string | null;
   battery: number | null; last_heard: number | null;
   lat: number | null; lon: number | null; pos_ts: number | null;
   speed: number | null; sats: number | null; gateway: string | null; rssi: number | null;
@@ -60,7 +60,7 @@ const STATE_LEAVES = ["attributes", "in_yard", "tracker_state", "battery", "last
 /** Publishes every dog that has reported a position to Home Assistant over MQTT Discovery. */
 export function startHa(client: MqttClient, db: Db) {
   const yard = config.yard ? new Yard(config.yard.lat, config.yard.lon, config.yard.radiusM) : null;
-  const known = new Set<number>();
+  const known = new Set<string>();
   const pub = (topic: string, payload: string | object | null, retain = true) =>
     client.publish(topic, payload == null ? "None" : typeof payload === "string" ? payload : JSON.stringify(payload), { retain });
   const iso = (ts: number | null) => (ts ? new Date(ts * 1000).toISOString() : null);
@@ -90,23 +90,29 @@ export function startHa(client: MqttClient, db: Db) {
     pub(t("reporting"), d.last_heard && now - d.last_heard <= config.staleMinutes * 60 ? "ON" : "OFF");
   };
 
-  const tracked = () => (db.dogs() as unknown as DogRow[]).filter((d) => d.lat != null);
+  const tracked = async () => ((await db.dogs()) as unknown as DogRow[]).filter((d) => d.lat != null);
 
-  const syncOne = (id: number) => {
-    const d = tracked().find((x) => x.id === id);
+  const syncOne = async (id: string) => {
+    const d = (await tracked()).find((x) => x.id === id);
     if (!d) return;
     if (!known.has(id)) { publishDiscovery(d); known.add(id); }
     publishState(d);
   };
-  const syncAll = (rediscover = false) => {
+  let syncing = false;
+  const syncAll = async (rediscover = false) => {
     if (rediscover) known.clear();
-    for (const d of tracked()) {
-      if (!known.has(d.id)) { publishDiscovery(d); known.add(d.id); }
-      publishState(d);
-    }
+    if (syncing) return; // a periodic sync may overlap a slow DB call; skip rather than pile up
+    syncing = true;
+    try {
+      for (const d of await tracked()) {
+        if (!known.has(d.id)) { publishDiscovery(d); known.add(d.id); }
+        publishState(d);
+      }
+    } catch (e) { console.error("[ha]", e); }
+    finally { syncing = false; }
   };
   /** Remove a dog's entities from Home Assistant (empty retained payloads). */
-  const retract = (id: number) => {
+  const retract = (id: string) => {
     known.delete(id);
     for (const m of discoveryMessages({ id, name: "", emoji: null }, true)) client.publish(m.topic, "", { retain: true });
     for (const leaf of STATE_LEAVES) client.publish(`${PREFIX}/${slug(id)}/${leaf}`, "", { retain: true });
@@ -115,19 +121,19 @@ export function startHa(client: MqttClient, db: Db) {
   client.on("connect", () => {
     pub(STATUS_TOPIC, "online");
     client.subscribe("homeassistant/status");
-    syncAll(true);
+    void syncAll(true);
   });
   client.on("message", (topic, payload) => {
-    if (topic === "homeassistant/status" && payload.toString() === "online") syncAll(true);
+    if (topic === "homeassistant/status" && payload.toString() === "online") void syncAll(true);
   });
   // The "reporting" sensor has to flip on its own when packets stop arriving.
-  setInterval(() => syncAll(), 30_000).unref();
+  setInterval(() => void syncAll(), 30_000).unref();
 
   return {
     /** A packet arrived from this tracker. */
-    onEvent: (node: string) => { const id = db.dogIdForNode(node); if (id != null) syncOne(id); },
+    onEvent: async (node: string) => { const id = await db.dogIdForNode(node); if (id != null) await syncOne(id); },
     /** A dog was created or edited (name/tracker changes republish its device). */
-    onDogChanged: (id: number) => { known.delete(id); syncOne(id); },
+    onDogChanged: async (id: string) => { known.delete(id); await syncOne(id); },
     onDogDeleted: retract,
     syncAll,
   };
