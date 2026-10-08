@@ -49,6 +49,11 @@ export function stepDog(d: SimDog, dt: number, yardRadiusM: number, rand: () => 
   }
   d.x += Math.cos(d.heading) * speed * dt;
   d.y += Math.sin(d.heading) * speed * dt;
+  // A wandering dog respects the fence even on a big time step.
+  if (d.scenario === "wander" || d.scenario === "silent") {
+    const r = Math.hypot(d.x, d.y), max = yardRadiusM * 0.95;
+    if (r > max) { d.x *= max / r; d.y *= max / r; }
+  }
   d.battery = Math.max(1, d.battery - dt * 0.0006); // ~2%/hour
 }
 
@@ -57,7 +62,7 @@ export function startSimulator(opts: {
   tickS: number; apply: (ev: MeshEvent) => void;
 }) {
   const names = ["Sim Maple", "Sim Birch", "Sim Juniper", "Sim Willow"];
-  let packetId = 1_000_000;
+  let packetId = Math.floor(Date.now() / 1000); // unique per run: (node, packet_id) must never repeat across restarts
   const dogs: SimDog[] = Array.from({ length: opts.count }, (_, i) => ({
     id: "!fa" + (i + 1).toString(16).padStart(6, "0"), name: names[i % names.length],
     x: (Math.random() - 0.5) * opts.yardRadiusM, y: (Math.random() - 0.5) * opts.yardRadiusM,

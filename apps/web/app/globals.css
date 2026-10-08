@@ -5,9 +5,6 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 .app { display: grid; grid-template-columns: 300px 1fr; height: 100dvh; }
 .side { padding: 16px; overflow: auto; border-right: 1px solid var(--card); }
 .side h1 { font-size: 18px; margin: 0 0 12px; }
-.dog { background: var(--card); border-radius: 10px; padding: 12px; margin-bottom: 10px; cursor: pointer; }
-.dog b { display: flex; align-items: center; gap: 8px; }
-.dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
 .meta { color: var(--muted); font-size: 13px; margin-top: 4px; }
 .stale { color: #d97706; }
 .map { height: 100%; width: 100%; }
@@ -20,3 +17,35 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 .btns { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
 .btns button { font: inherit; font-size: 12px; padding: 3px 8px; border-radius: 6px; border: 1px solid var(--muted); background: var(--card); color: var(--fg); cursor: pointer; }
 .btns button:hover { border-color: var(--fg); }
+
+h2 { font-size: 13px; margin: 18px 0 8px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; display: flex; align-items: center; gap: 8px; }
+.count { background: var(--card); border-radius: 10px; padding: 0 7px; font-size: 12px; }
+.card { background: var(--card); border-radius: 10px; padding: 12px; margin-bottom: 10px; cursor: pointer; }
+.card b { display: flex; align-items: center; gap: 8px; }
+.inbox .card { border: 1px solid #8b5cf6; }
+.dot { width: 24px; height: 24px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 14px; flex: none; }
+button.link { background: none; border: 0; color: #2e86ab; font: inherit; font-size: 13px; cursor: pointer; margin-left: auto; padding: 0; text-transform: none; letter-spacing: 0; }
+.edit { font-weight: 400; }
+button.primary { background: #2e86ab; color: #fff; border-color: #2e86ab; }
+button.danger { color: #d64545; border-color: #d64545; }
+.btns select, .dialog select { font: inherit; font-size: 12px; padding: 3px 6px; border-radius: 6px; background: var(--card); color: var(--fg); border: 1px solid var(--muted); }
+.others { margin-top: 14px; font-size: 13px; }
+.others summary { cursor: pointer; color: var(--muted); }
+.error { color: #d64545; font-size: 13px; }
+.pin { width: 30px; height: 30px; border-radius: 50%; border: 3px solid #fff; box-shadow: 0 1px 5px #0007; display: flex; align-items: center; justify-content: center; font-size: 16px; cursor: pointer; }
+.pin.unclaimed { background: #9ca3af; color: #fff; font-weight: 700; border-style: dashed; }
+.dialog { border: 0; border-radius: 14px; padding: 20px; width: min(420px, 92vw); background: var(--bg); color: var(--fg); box-shadow: 0 10px 40px #0006; }
+.dialog::backdrop { background: #0006; }
+.dialog h2 { margin: 0 0 12px; font-size: 18px; text-transform: none; letter-spacing: 0; color: var(--fg); }
+.dialog label, .dialog .lbl { display: block; font-size: 13px; color: var(--muted); margin-bottom: 10px; }
+.dialog input, .dialog textarea { display: block; width: 100%; font: inherit; font-size: 15px; padding: 7px 9px; margin-top: 3px; border-radius: 8px; border: 1px solid var(--muted); background: var(--card); color: var(--fg); }
+.dialog select { display: block; width: 100%; font-size: 15px; padding: 7px 9px; margin-top: 3px; }
+.swatches { display: flex; gap: 8px; flex-wrap: wrap; margin: 4px 0 12px; }
+.swatches button { width: 32px; height: 32px; border-radius: 50%; border: 2px solid transparent; background: var(--card); cursor: pointer; font-size: 16px; padding: 0; }
+.swatches button.sel { border-color: var(--fg); }
+.actions { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+.actions button { font: inherit; padding: 7px 14px; border-radius: 8px; border: 1px solid var(--muted); background: var(--card); color: var(--fg); cursor: pointer; }
+.actions button.primary { background: #2e86ab; color: #fff; border-color: #2e86ab; }
+.actions button:disabled { opacity: .5; cursor: default; }
+.spacer { flex: 1; }
+.hint { font-size: 12px; color: var(--muted); margin: 0 0 8px; }

@@ -5,20 +5,21 @@ import { Yard } from "./geo.js";
 
 const PREFIX = "dogtracker";
 export const STATUS_TOPIC = `${PREFIX}/status`;
-const slug = (id: string) => id.replace(/^!/, "");
 
-interface NodeRow {
-  id: string; name: string | null; long_name: string | null;
+/** Home Assistant entities hang off the DOG (not the radio), so they survive a collar swap. */
+const slug = (dogId: number) => `dog${dogId}`;
+
+interface DogRow {
+  id: number; name: string; emoji: string | null;
   battery: number | null; last_heard: number | null;
   lat: number | null; lon: number | null; pos_ts: number | null;
   speed: number | null; sats: number | null; gateway: string | null; rssi: number | null;
 }
 
-export function discoveryMessages(n: Pick<NodeRow, "id" | "name" | "long_name">, hasYard: boolean) {
-  const s = slug(n.id);
+export function discoveryMessages(dog: Pick<DogRow, "id" | "name" | "emoji">, hasYard: boolean) {
+  const s = slug(dog.id);
   const device = {
-    identifiers: [`${PREFIX}_${s}`], name: n.name ?? n.long_name ?? `Dog ${s}`,
-    manufacturer: "Meshtastic", model: "GPS tracker",
+    identifiers: [`${PREFIX}_${s}`], name: dog.name, manufacturer: "Meshtastic", model: "GPS tracker",
   };
   const base = { device, availability_topic: STATUS_TOPIC };
   const t = (leaf: string) => `${PREFIX}/${s}/${leaf}`;
@@ -54,53 +55,61 @@ export function discoveryMessages(n: Pick<NodeRow, "id" | "name" | "long_name">,
   ];
 }
 
-/** Publishes every tracked node (one with a position) to Home Assistant over MQTT Discovery. */
+const STATE_LEAVES = ["attributes", "in_yard", "tracker_state", "battery", "last_seen", "rssi", "sats", "reporting"];
+
+/** Publishes every dog that has reported a position to Home Assistant over MQTT Discovery. */
 export function startHa(client: MqttClient, db: Db) {
   const yard = config.yard ? new Yard(config.yard.lat, config.yard.lon, config.yard.radiusM) : null;
-  const known = new Set<string>();
+  const known = new Set<number>();
   const pub = (topic: string, payload: string | object | null, retain = true) =>
     client.publish(topic, payload == null ? "None" : typeof payload === "string" ? payload : JSON.stringify(payload), { retain });
   const iso = (ts: number | null) => (ts ? new Date(ts * 1000).toISOString() : null);
 
-  const publishDiscovery = (n: NodeRow) => {
-    for (const m of discoveryMessages(n, !!yard)) pub(m.topic, m.payload);
+  const publishDiscovery = (d: DogRow) => {
+    for (const m of discoveryMessages(d, !!yard)) pub(m.topic, m.payload);
   };
 
-  const publishState = (n: NodeRow, now = Date.now() / 1000) => {
-    const s = slug(n.id), t = (leaf: string) => `${PREFIX}/${s}/${leaf}`;
-    if (n.lat != null && n.lon != null) {
+  const publishState = (d: DogRow, now = Date.now() / 1000) => {
+    const s = slug(d.id), t = (leaf: string) => `${PREFIX}/${s}/${leaf}`;
+    if (d.lat != null && d.lon != null) {
       pub(t("attributes"), {
-        latitude: n.lat, longitude: n.lon, gps_accuracy: config.gpsAccuracyM,
-        speed_ms: n.speed, last_position: iso(n.pos_ts), gateway: n.gateway,
+        latitude: d.lat, longitude: d.lon, gps_accuracy: config.gpsAccuracyM,
+        speed_ms: d.speed, last_position: iso(d.pos_ts), gateway: d.gateway,
       });
       if (yard) {
-        const inside = yard.update(n.id, n.lat, n.lon);
+        const inside = yard.update(s, d.lat, d.lon);
         pub(t("in_yard"), inside ? "ON" : "OFF");
         pub(t("tracker_state"), inside ? "home" : "not_home");
       }
     }
     // 101 is Meshtastic's "powered/charging" marker; HA wants 0-100.
-    if (n.battery != null) pub(t("battery"), String(Math.min(100, n.battery)));
-    pub(t("last_seen"), iso(n.last_heard));
-    if (n.rssi != null) pub(t("rssi"), String(n.rssi));
-    if (n.sats != null) pub(t("sats"), String(n.sats));
-    pub(t("reporting"), n.last_heard && now - n.last_heard <= config.staleMinutes * 60 ? "ON" : "OFF");
+    if (d.battery != null) pub(t("battery"), String(Math.min(100, d.battery)));
+    pub(t("last_seen"), iso(d.last_heard));
+    if (d.rssi != null) pub(t("rssi"), String(Math.round(d.rssi)));
+    if (d.sats != null) pub(t("sats"), String(d.sats));
+    pub(t("reporting"), d.last_heard && now - d.last_heard <= config.staleMinutes * 60 ? "ON" : "OFF");
   };
 
-  const tracked = () => (db.nodes() as NodeRow[]).filter((n) => n.lat != null); // skips base stations (no GPS)
+  const tracked = () => (db.dogs() as unknown as DogRow[]).filter((d) => d.lat != null);
 
-  const syncOne = (id: string) => {
-    const n = tracked().find((x) => x.id === id);
-    if (!n) return;
-    if (!known.has(id)) { publishDiscovery(n); known.add(id); }
-    publishState(n);
+  const syncOne = (id: number) => {
+    const d = tracked().find((x) => x.id === id);
+    if (!d) return;
+    if (!known.has(id)) { publishDiscovery(d); known.add(id); }
+    publishState(d);
   };
   const syncAll = (rediscover = false) => {
     if (rediscover) known.clear();
-    for (const n of tracked()) {
-      if (!known.has(n.id)) { publishDiscovery(n); known.add(n.id); }
-      publishState(n);
+    for (const d of tracked()) {
+      if (!known.has(d.id)) { publishDiscovery(d); known.add(d.id); }
+      publishState(d);
     }
+  };
+  /** Remove a dog's entities from Home Assistant (empty retained payloads). */
+  const retract = (id: number) => {
+    known.delete(id);
+    for (const m of discoveryMessages({ id, name: "", emoji: null }, true)) client.publish(m.topic, "", { retain: true });
+    for (const leaf of STATE_LEAVES) client.publish(`${PREFIX}/${slug(id)}/${leaf}`, "", { retain: true });
   };
 
   client.on("connect", () => {
@@ -114,5 +123,12 @@ export function startHa(client: MqttClient, db: Db) {
   // The "reporting" sensor has to flip on its own when packets stop arriving.
   setInterval(() => syncAll(), 30_000).unref();
 
-  return { onEvent: (id: string) => syncOne(id), syncAll, rename: (id: string) => { known.delete(id); syncOne(id); } };
+  return {
+    /** A packet arrived from this tracker. */
+    onEvent: (node: string) => { const id = db.dogIdForNode(node); if (id != null) syncOne(id); },
+    /** A dog was created or edited (name/tracker changes republish its device). */
+    onDogChanged: (id: number) => { known.delete(id); syncOne(id); },
+    onDogDeleted: retract,
+    syncAll,
+  };
 }
