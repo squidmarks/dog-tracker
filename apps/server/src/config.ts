@@ -12,6 +12,9 @@ export const config = {
   yard: process.env.YARD_LAT && process.env.YARD_LON
     ? { lat: Number(process.env.YARD_LAT), lon: Number(process.env.YARD_LON), radiusM: Number(process.env.YARD_RADIUS_M ?? 40) }
     : null,
+  // Simulated dogs (dev/demo): SIM_DOGS=2 starts two. They use node ids !fa000001+.
+  simDogs: Number(process.env.SIM_DOGS ?? 0),
+  simTickS: Number(process.env.SIM_TICK_S ?? 5),
   staleMinutes: Number(process.env.STALE_MINUTES ?? 20),
   gpsAccuracyM: Number(process.env.GPS_ACCURACY_M ?? 15),
 };

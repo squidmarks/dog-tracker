@@ -12,3 +12,11 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); f
 .stale { color: #d97706; }
 .map { height: 100%; width: 100%; }
 @media (max-width: 720px) { .app { grid-template-columns: 1fr; grid-template-rows: auto 1fr; } .side { border: 0; max-height: 40dvh; } }
+
+.badge { font-size: 11px; background: #8b5cf6; color: #fff; border-radius: 4px; padding: 1px 5px; font-weight: 500; }
+.simpanel { border-top: 1px solid var(--card); margin-top: 16px; padding-top: 12px; }
+.simpanel h2 { font-size: 14px; margin: 0 0 8px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+.simdog { margin-bottom: 10px; }
+.btns { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.btns button { font: inherit; font-size: 12px; padding: 3px 8px; border-radius: 6px; border: 1px solid var(--muted); background: var(--card); color: var(--fg); cursor: pointer; }
+.btns button:hover { border-color: var(--fg); }

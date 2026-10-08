@@ -65,6 +65,10 @@ export function openDb(path: string) {
       return db.prepare("SELECT ts, lat, lon, speed FROM positions WHERE node = ? AND ts >= ? ORDER BY ts")
         .all(node, sinceTs);
     },
+    deleteSimNodes() {
+      db.exec("DELETE FROM positions WHERE node GLOB '!fa[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'");
+      return db.prepare("DELETE FROM nodes WHERE id GLOB '!fa[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'").run().changes;
+    },
     rename(node: string, name: string | null, color: string | null) {
       return db.prepare("UPDATE nodes SET name = ?, color = ? WHERE id = ?").run(name, color, node).changes > 0;
     },

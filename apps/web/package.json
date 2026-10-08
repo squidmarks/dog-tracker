@@ -3,10 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev -p 3000",
-    "build": "next build",
+    "dev": "npm run copy-worker && next dev -p 3000",
+    "build": "npm run copy-worker && next build",
     "start": "next start -p 3000",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "copy-worker": "mkdir -p public && cp ../../node_modules/maplibre-gl/dist/maplibre-gl-worker.mjs public/maplibre-gl-worker.mjs"
   },
   "dependencies": {
     "maplibre-gl": "^6.13.0",

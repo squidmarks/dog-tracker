@@ -12,7 +12,7 @@
   "dependencies": {
     "@bufbuild/protobuf": "^2.16.0",
     "@meshtastic/protobufs": "^2.8.0",
-    "better-sqlite3": "^13.0.3",
+    "better-sqlite3": "^12.11.1",
     "express": "^5.2.1",
     "mqtt": "^5.16.0"
   },

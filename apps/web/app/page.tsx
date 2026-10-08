@@ -1,7 +1,10 @@
 "use client";
 import * as maplibregl from "maplibre-gl";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ago, colorOf, displayName, type Dog, type TrackPoint } from "../lib/types";
+import { ago, colorOf, displayName, type Dog, type SimState, type TrackPoint } from "../lib/types";
+
+// MapLibre's web worker can't be bundled by Next; it is copied to /public by the copy-worker script.
+maplibregl.setWorkerUrl("/maplibre-gl-worker.mjs");
 
 const STALE_AFTER_S = 15 * 60;
 const TRACK_HOURS = 6;
@@ -9,6 +12,7 @@ const TRACK_HOURS = 6;
 export default function Page() {
   const [dogs, setDogs] = useState<Dog[]>([]);
   const [now, setNow] = useState(Date.now() / 1000);
+  const [sim, setSim] = useState<SimState | null>(null);
   const mapEl = useRef<HTMLDivElement>(null);
   const map = useRef<maplibregl.Map | null>(null);
   const markers = useRef(new Map<string, maplibregl.Marker>());
@@ -17,7 +21,14 @@ export default function Page() {
   const load = useCallback(async () => {
     const res = await fetch("/api/nodes");
     if (res.ok) setDogs(await res.json());
+    const simRes = await fetch("/api/sim");
+    if (simRes.ok) setSim(await simRes.json());
   }, []);
+
+  const trigger = async (id: string, scenario: string) => {
+    await fetch(`/api/sim/${encodeURIComponent(id)}/${scenario}?minutes=30`, { method: "POST" });
+    load();
+  };
 
   // Initial load, live updates via SSE, and a slow poll as a safety net.
   useEffect(() => {
@@ -93,18 +104,33 @@ export default function Page() {
           return (
             <div key={d.id} className="dog" onClick={() => d.lat != null && d.lon != null &&
               map.current?.flyTo({ center: [d.lon, d.lat], zoom: 17 })}>
-              <b><span className="dot" style={{ background: colorOf(d, i) }} />{displayName(d)}</b>
+              <b><span className="dot" style={{ background: colorOf(d, i) }} />{displayName(d)}{d.sim && <span className="badge">sim</span>}</b>
               <div className={`meta ${stale ? "stale" : ""}`}>
                 {d.pos_ts ? `Position ${ago(d.pos_ts, now)}` : "No position yet"}
                 {d.battery != null && ` · 🔋 ${d.battery > 100 ? "charging" : d.battery + "%"}`}
               </div>
               <div className="meta">
-                {d.sats != null && `${d.sats} sats · `}{d.rssi != null && `RSSI ${d.rssi} · `}
+                {d.sats != null && `${d.sats} sats · `}{d.rssi != null && `RSSI ${Math.round(d.rssi)} · `}
                 heard {ago(d.last_heard, now)}
               </div>
             </div>
           );
         })}
+        {sim?.enabled && (
+          <section className="simpanel">
+            <h2>Simulator</h2>
+            {sim.dogs.map((sd) => (
+              <div key={sd.id} className="simdog">
+                <div>{sd.name} <span className="meta">· {sd.silentUntil > now ? "silent" : sd.scenario}</span></div>
+                <div className="btns">
+                  {sim.scenarios.map((sc) => (
+                    <button key={sc} onClick={() => trigger(sd.id, sc)}>{sc === "silent" ? "go silent 30m" : sc}</button>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </section>
+        )}
       </aside>
       <div ref={mapEl} className="map" />
     </div>

@@ -1,0 +1,7 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    { "name": "dog-tracker-server", "runtimeExecutable": "env", "runtimeArgs": ["SIM_DOGS=2", "SIM_TICK_S=2", "DB_PATH=/tmp/dog-tracker-dev.db", "MQTT_URL=mqtt://127.0.0.1:1", "npm", "run", "dev", "--workspace", "@dog-tracker/server"], "port": 4000 },
+    { "name": "dog-tracker-web", "runtimeExecutable": "npm", "runtimeArgs": ["run", "dev", "--workspace", "@dog-tracker/web"], "port": 3000 }
+  ]
+}

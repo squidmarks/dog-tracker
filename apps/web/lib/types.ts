@@ -3,6 +3,11 @@ export interface Dog {
   battery: number | null; voltage: number | null; last_heard: number | null;
   lat: number | null; lon: number | null; pos_ts: number | null; speed: number | null; sats: number | null;
   gateway: string | null; rssi: number | null; snr: number | null;
+  sim?: boolean;
+}
+export interface SimState {
+  enabled: boolean; scenarios: string[];
+  dogs: { id: string; name: string; scenario: string; silentUntil: number }[];
 }
 export interface TrackPoint { ts: number; lat: number; lon: number }
 
