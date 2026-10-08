@@ -17,7 +17,7 @@ export interface Hooks {
 /** Accept only the editable dog fields from a request body. */
 function dogInput(body: Record<string, unknown> | undefined): DogInput {
   const out: DogInput = {};
-  for (const k of ["name", "color", "emoji", "breed", "notes", "tracker"] as const) {
+  for (const k of ["name", "color", "emoji", "breed", "notes", "tracker", "alerts"] as const) {
     if (body && k in body) (out as Record<string, unknown>)[k] = body[k] === "" ? null : body[k];
   }
   if (out.name === null) out.name = "";
@@ -130,8 +130,9 @@ export function createApp(db: Db, hooks: Hooks) {
     sim.trigger(req.params.id, scenario, minutes) ? res.json({ ok: true }) : res.status(404).json({ error: "unknown sim tracker" });
   });
   app.delete("/api/sim/nodes", async (_req, res) => {
-    const removed = await db.deleteSimNodes();
-    res.json({ removed });
+    const { nodes, dogIds } = await db.deleteSimNodes();
+    for (const id of dogIds) await hooks.onDogDeleted(id); // retract their Home Assistant entities too
+    res.json({ removed: nodes });
   });
 
   // Server-sent events: the web UI refetches on each event.

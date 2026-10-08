@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { DogDialog, type DogDialogState } from "../components/DogDialog";
-import { MapView, type Focus } from "../components/MapView";
+import { MapView, type BaseLayer, type Focus } from "../components/MapView";
 import { SettingsDialog } from "../components/SettingsDialog";
 import { ZoneDialog, type ZoneDialogState } from "../components/ZoneDialog";
 import { api } from "../lib/api";
@@ -24,10 +24,15 @@ export default function Page() {
   const [zoneDialog, setZoneDialog] = useState<ZoneDialogState | null>(null);
   const [draw, setDraw] = useState<DrawState | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [base, setBase] = useState<BaseLayer>("map");
   const [toasts, setToasts] = useState<{ id: string; text: string }[]>([]);
   const [focus, setFocus] = useState<Focus | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const focusN = useRef(0);
+
+  // Remember the map style per browser (it's only a convenience, so storage may be unavailable).
+  useEffect(() => { try { if (localStorage.getItem("dt-base") === "satellite") setBase("satellite"); } catch { /* ignore */ } }, []);
+  const chooseBase = (b: BaseLayer) => { setBase(b); try { localStorage.setItem("dt-base", b); } catch { /* ignore */ } };
 
   const load = useCallback(async () => {
     try {
@@ -137,7 +142,7 @@ export default function Page() {
               <div key={d.id} className="card dog" onClick={() => flyTo(d.lat, d.lon)}>
                 <b>
                   <span className="dot" style={{ background: dogColor(d) }}>{dogEmoji(d)}</span>
-                  {d.name}{d.sim && <span className="badge">sim</span>}
+                  {d.name}{!d.alerts && <span title="Alerts off">🔕</span>}{d.sim && <span className="badge">sim</span>}
                   <button className="link edit" aria-label={`Edit ${d.name}`}
                     onClick={(e) => { e.stopPropagation(); setDialog({ dog: d }); }}>Edit</button>
                 </b>
@@ -181,7 +186,7 @@ export default function Page() {
             <div key={e.id} className={`event ${e.alert ? "alert" : ""}`}
               onClick={() => flyTo(e.lat ?? null, e.lon ?? null)}>
               <span className="ico">{EVENT_ICON[e.type]}</span>
-              <span className="msg">{e.message}</span>
+              <span className="msg">{e.message}{e.sim && <span className="badge">sim</span>}</span>
               <span className="when">{ago(e.ts, now)}</span>
             </div>
           ))}
@@ -218,8 +223,12 @@ export default function Page() {
       </aside>
 
       <div className="mapwrap">
-        <MapView dogs={dogs} trackers={trackers} zones={zones} draw={draw} focus={focus}
+        <MapView dogs={dogs} trackers={trackers} zones={zones} draw={draw} focus={focus} base={base}
           onDrawClick={onDrawClick} onZoneClick={(id) => { const z = zones.find((x) => x.id === id); if (z) setZoneDialog({ zone: z }); }} />
+        <div className="basectl" role="group" aria-label="Map style">
+          <button className={base === "map" ? "on" : ""} onClick={() => chooseBase("map")}>Map</button>
+          <button className={base === "satellite" ? "on" : ""} onClick={() => chooseBase("satellite")}>Satellite</button>
+        </div>
         {draw && (
           <div className="drawbar">
             <span>{draw.mode === "circle"

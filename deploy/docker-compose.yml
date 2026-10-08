@@ -23,6 +23,8 @@ services:
       YARD_LAT: ${YARD_LAT:-}
       YARD_LON: ${YARD_LON:-}
       YARD_RADIUS_M: ${YARD_RADIUS_M:-40}
+      SIM_DOGS: ${SIM_DOGS:-0}
+      SIM_TICK_S: ${SIM_TICK_S:-15}
       PUSHOVER_TOKEN: ${PUSHOVER_TOKEN:-}
       PUSHOVER_USER: ${PUSHOVER_USER:-}
       PUBLIC_URL: ${PUBLIC_URL:-}

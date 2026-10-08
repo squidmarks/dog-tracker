@@ -6,6 +6,8 @@ export type Db = Awaited<ReturnType<typeof openDb>>;
 export interface DogInput {
   name?: string; color?: string | null; emoji?: string | null; breed?: string | null; notes?: string | null;
   tracker?: string | null;
+  /** Send alerts (push + toast) for this dog. Default true; false keeps events in the timeline but quiet. */
+  alerts?: boolean;
 }
 
 /** A dog with its tracker's live state (see dogs()). */
@@ -19,7 +21,7 @@ interface PositionDoc {
   node: string; packet_id: number; ts: number; lat: number; lon: number;
   alt: number | null; speed: number | null; sats: number | null; gateway: string | null; rssi: number | null; snr: number | null;
 }
-interface DogDoc { _id: ObjectId; name: string; color: string | null; emoji: string | null; breed: string | null; notes: string | null; created_at: number }
+interface DogDoc { _id: ObjectId; name: string; color: string | null; emoji: string | null; breed: string | null; notes: string | null; alerts?: boolean; created_at: number }
 /** Assignment history: a dog's track is the positions of whichever tracker it carried at the time.
  *  `open: true` marks the current assignment (and is unset on close) so partial unique indexes can enforce
  *  "one dog per tracker, one tracker per dog". */
@@ -42,6 +44,8 @@ export interface DogEvent {
   zoneId?: string; zoneName?: string; lat?: number | null; lon?: number | null;
   /** Worth interrupting the user for (drives push notifications and the highlighted timeline style). */
   alert: boolean; message: string;
+  /** Raised by a simulated tracker: shown in the UI, but never pushed to the phone. */
+  sim?: boolean;
 }
 
 export interface Settings { staleMinutes: number; lowBatteryPct: number; fenceMarginM: number }
@@ -180,7 +184,7 @@ export async function openDb(url: string, dbName: string) {
         const node = open.find((a) => a.dogId.equals(d._id))?.node ?? null;
         const [n, p] = node ? await Promise.all([nodes.findOne({ _id: node }), latestPosition(node)]) : [null, null];
         return { id: String(d._id), name: d.name, color: d.color, emoji: d.emoji, breed: d.breed, notes: d.notes,
-          created_at: d.created_at, tracker: node, ...liveFields(n, p) };
+          alerts: d.alerts !== false, created_at: d.created_at, tracker: node, ...liveFields(n, p) };
       }));
     },
     async dog(id: string): Promise<DogLive | undefined> {
@@ -191,7 +195,7 @@ export async function openDb(url: string, dbName: string) {
       if (!name) throw new Error("A dog needs a name");
       const { insertedId } = await dogsCol.insertOne({
         _id: new ObjectId(), name, color: input.color ?? null, emoji: input.emoji ?? null,
-        breed: input.breed ?? null, notes: input.notes ?? null, created_at: at,
+        breed: input.breed ?? null, notes: input.notes ?? null, alerts: input.alerts !== false, created_at: at,
       });
       if (input.tracker) {
         try { await assign(insertedId, input.tracker, at); }
@@ -210,6 +214,7 @@ export async function openDb(url: string, dbName: string) {
         if (f === "name" && !String(v ?? "").trim()) throw new Error("A dog needs a name");
         set[f] = typeof v === "string" ? v.trim() : v;
       }
+      if ("alerts" in input) set.alerts = input.alerts !== false;
       // Tracker first: if it fails (already claimed), nothing else has changed.
       if ("tracker" in input) { if (input.tracker) await assign(_id, input.tracker, at); else await unassign(_id, at); }
       if (Object.keys(set).length) await dogsCol.updateOne({ _id }, { $set: set });
@@ -287,14 +292,16 @@ export async function openDb(url: string, dbName: string) {
       return api.settings();
     },
 
-    async deleteSimNodes(): Promise<number> {
+    /** Remove simulated trackers, their positions and any dogs that carried them. Returns the removed dog ids so callers can retract them elsewhere (Home Assistant). */
+    async deleteSimNodes(): Promise<{ nodes: number; dogIds: string[] }> {
       const ids = (await nodes.find({}, { projection: { _id: 1 } }).toArray()).map((n) => n._id).filter((i) => SIM_NODE.test(i));
-      if (!ids.length) return 0;
-      const dogIds = (await assignments.find({ node: { $in: ids } }).toArray()).map((a) => a.dogId);
+      if (!ids.length) return { nodes: 0, dogIds: [] };
+      const dogIds = [...new Set((await assignments.find({ node: { $in: ids } }).toArray()).map((a) => a.dogId))];
       await dogsCol.deleteMany({ _id: { $in: dogIds } });
       await assignments.deleteMany({ node: { $in: ids } });
       await positions.deleteMany({ node: { $in: ids } });
-      return (await nodes.deleteMany({ _id: { $in: ids } })).deletedCount;
+      const removed = (await nodes.deleteMany({ _id: { $in: ids } })).deletedCount;
+      return { nodes: removed, dogIds: dogIds.map(String) };
     },
 
     /** Test helper: empty every collection (the app user can't drop databases, by design). */

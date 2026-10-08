@@ -36,6 +36,24 @@ describe.skipIf(!hasMongo)("Monitor (Mongo)", () => {
     expect(monitor.isInside(dogId, (await db.zones())[0].id)).toBe(true);
   });
 
+  it("a dog with alerts turned off logs events quietly", async () => {
+    await db.updateDog(dogId, { alerts: false });
+    await fix(2, 60); await fix(3, 65);
+    expect(events[0]).toMatchObject({ type: "zone_exit", alert: false });
+    expect((await db.dog(dogId))!.alerts).toBe(false);
+  });
+
+  it("marks events from simulated trackers as sim", async () => {
+    await db.apply({ kind: "position", node: "!fa000001", packetId: 1, gateway: "!g", rssi: -80, snr: 5, ts: 100, lat: north(10), lon: C.lon, alt: null, speed: null, sats: 8 }, 100);
+    await db.createDog({ name: "Sim", tracker: "!fa000001" });
+    await monitor.reload(true);
+    for (const [i, m] of [60, 65].entries()) {
+      await db.apply({ kind: "position", node: "!fa000001", packetId: 10 + i, gateway: "!g", rssi: -80, snr: 5, ts: 200 + i, lat: north(m), lon: C.lon, alt: null, speed: null, sats: 8 }, 200 + i);
+      await monitor.onPosition("!fa000001", north(m), C.lon);
+    }
+    expect(events.find((e) => e.dogName === "Sim")).toMatchObject({ type: "zone_exit", sim: true });
+  });
+
   it("alertOn=enter makes a danger zone: entering is the alert", async () => {
     await db.createZone({ name: "Pond", ring: circleRing(north(200), C.lon, 20), alertOn: "enter" });
     await monitor.reload();

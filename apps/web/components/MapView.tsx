@@ -40,12 +40,14 @@ const zonesGeoJSON = (zones: Zone[]) => ({
   })),
 });
 
-export function MapView({ dogs, trackers, zones, draw, focus, onDrawClick, onZoneClick }: {
-  dogs: Dog[]; trackers: Tracker[]; zones: Zone[]; draw: DrawState | null; focus: Focus | null;
+export type BaseLayer = "map" | "satellite";
+
+export function MapView({ dogs, trackers, zones, draw, focus, base, onDrawClick, onZoneClick }: {
+  dogs: Dog[]; trackers: Tracker[]; zones: Zone[]; draw: DrawState | null; focus: Focus | null; base: BaseLayer;
   onDrawClick: (lat: number, lon: number) => void; onZoneClick: (id: string) => void;
 }) {
-  const live = useRef({ draw, zones, onDrawClick, onZoneClick });
-  live.current = { draw, zones, onDrawClick, onZoneClick };
+  const live = useRef({ draw, zones, base, onDrawClick, onZoneClick });
+  live.current = { draw, zones, base, onDrawClick, onZoneClick };
   const el = useRef<HTMLDivElement>(null);
   const map = useRef<maplibregl.Map | null>(null);
   const dogMarkers = useRef(new Map<string, maplibregl.Marker>());
@@ -59,9 +61,16 @@ export function MapView({ dogs, trackers, zones, draw, focus, onDrawClick, onZon
       container: el.current, center: [-98, 39], zoom: 3,
       style: {
         version: 8,
-        sources: { osm: { type: "raster", tileSize: 256, attribution: "© OpenStreetMap contributors",
-          tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"] } },
-        layers: [{ id: "osm", type: "raster", source: "osm" }],
+        sources: {
+          osm: { type: "raster", tileSize: 256, attribution: "© OpenStreetMap contributors",
+            tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"] },
+          sat: { type: "raster", tileSize: 256, maxzoom: 19, attribution: "Imagery © Esri, Maxar, Earthstar Geographics",
+            tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"] },
+        },
+        layers: [
+          { id: "osm", type: "raster", source: "osm", layout: { visibility: live.current.base === "map" ? "visible" : "none" } },
+          { id: "sat", type: "raster", source: "sat", layout: { visibility: live.current.base === "satellite" ? "visible" : "none" } },
+        ],
       },
     });
     m.addControl(new maplibregl.NavigationControl());
@@ -89,6 +98,19 @@ export function MapView({ dogs, trackers, zones, draw, focus, onDrawClick, onZon
   useEffect(() => {
     if (focus && map.current) map.current.flyTo({ center: [focus.lon, focus.lat], zoom: 17 });
   }, [focus]);
+
+  useEffect(() => {
+    const m = map.current;
+    if (!m) return;
+    const apply = () => {
+      if (m.getLayer("osm")) m.setLayoutProperty("osm", "visibility", base === "map" ? "visible" : "none");
+      if (m.getLayer("sat")) m.setLayoutProperty("sat", "visibility", base === "satellite" ? "visible" : "none");
+      // Zone outlines need more weight on busy imagery.
+      if (m.getLayer("zones-line")) m.setPaintProperty("zones-line", "line-width", base === "satellite" ? 3.5 : 2.5);
+      if (m.getLayer("zones-fill")) m.setPaintProperty("zones-fill", "fill-opacity", base === "satellite" ? 0.22 : 0.16);
+    };
+    if (m.isStyleLoaded()) apply(); else m.once("load", apply);
+  }, [base]);
 
   useEffect(() => {
     const m = map.current;

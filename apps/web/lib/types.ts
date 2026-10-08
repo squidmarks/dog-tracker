@@ -5,7 +5,7 @@ export interface Live {
 }
 export interface Dog extends Live {
   id: string; name: string; color: string | null; emoji: string | null; breed: string | null; notes: string | null;
-  tracker: string | null; sim?: boolean;
+  tracker: string | null; alerts: boolean; sim?: boolean;
 }
 /** A radio heard on the channel. Unclaimed ones with a GPS fix are the "new trackers" inbox. */
 export interface Tracker extends Live {
@@ -25,7 +25,7 @@ export interface Zone {
 export type EventType = "zone_exit" | "zone_enter" | "silent" | "reporting" | "low_battery" | "battery_ok";
 export interface DogEvent {
   id: string; ts: number; type: EventType; dogId: string; dogName: string; zoneId?: string; zoneName?: string;
-  lat?: number | null; lon?: number | null; alert: boolean; message: string;
+  lat?: number | null; lon?: number | null; alert: boolean; message: string; sim?: boolean;
 }
 export interface Settings { staleMinutes: number; lowBatteryPct: number; fenceMarginM: number }
 /** Zone drawing in progress on the map. Points are [lon, lat]; a circle is [centre, edge]. */

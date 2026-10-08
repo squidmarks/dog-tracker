@@ -71,3 +71,8 @@ h2 button.link { margin-left: 0; }
 .dialog label.check { display: flex; align-items: center; gap: 8px; color: var(--fg); font-size: 14px; }
 .dialog label.check input { width: auto; margin: 0; }
 .dialog label.check.indent { margin-left: 22px; }
+
+.basectl { position: absolute; top: 10px; left: 10px; display: flex; z-index: 4; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 6px #0005; }
+.basectl button { font: inherit; font-size: 13px; padding: 6px 12px; border: 0; background: var(--bg); color: var(--fg); cursor: pointer; }
+.basectl button.on { background: #2e86ab; color: #fff; }
+.event .badge { margin-left: 6px; }

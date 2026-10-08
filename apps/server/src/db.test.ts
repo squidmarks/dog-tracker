@@ -82,7 +82,9 @@ describe.skipIf(!hasMongo)("trackers and dogs (Mongo)", () => {
     await pos("!aaaa0001", 2, 100);
     await db.createDog({ name: "Sim", tracker: "!fa000001" });
     await db.createDog({ name: "Real", tracker: "!aaaa0001" });
-    expect(await db.deleteSimNodes()).toBe(1);
+    const removed = await db.deleteSimNodes();
+    expect(removed.nodes).toBe(1);
+    expect(removed.dogIds).toHaveLength(1);
     expect((await db.dogs()).map((d) => d.name)).toEqual(["Real"]);
     expect((await db.trackers()).map((t) => t.id)).toEqual(["!aaaa0001"]);
   });

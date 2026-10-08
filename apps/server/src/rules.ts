@@ -1,10 +1,11 @@
 import type { Db, DogEvent, EventType, Zone } from "./db.js";
 import { Membership } from "./geo.js";
+import { isSimNode } from "./sim.js";
 
 type Emit = (e: DogEvent) => void | Promise<void>;
 interface LiveDog {
   id: string; name: string; tracker: string | null; last_heard: number | null; battery: number | null;
-  lat: number | null; lon: number | null;
+  lat: number | null; lon: number | null; alerts?: boolean;
 }
 
 const appliesTo = (z: Zone, dogId: string) => z.dogs === null || z.dogs.includes(dogId);
@@ -90,7 +91,10 @@ export class Monitor {
   private async event(dog: LiveDog, type: EventType, alert: boolean, message: string,
     extra: { zone?: Zone; lat?: number | null; lon?: number | null } = {}) {
     const saved = await this.db.addEvent({
-      ts: Math.floor(Date.now() / 1000), type, dogId: dog.id, dogName: dog.name, alert, message,
+      ts: Math.floor(Date.now() / 1000), type, dogId: dog.id, dogName: dog.name,
+      alert: alert && dog.alerts !== false, // a muted dog still logs events, just quietly
+      message,
+      ...(dog.tracker && isSimNode(dog.tracker) ? { sim: true } : {}),
       ...(extra.zone ? { zoneId: extra.zone.id, zoneName: extra.zone.name } : {}),
       lat: extra.lat ?? null, lon: extra.lon ?? null,
     });

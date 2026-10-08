@@ -42,7 +42,8 @@ describe.skipIf(!hasMongo)("dogs API (Mongo)", () => {
   it("edits, unlinks and deletes", async () => {
     const { body: dog } = await call("POST", "/api/dogs", { name: "Ozzie", tracker: "!aaaa0001" });
     const edited = await call("PATCH", `/api/dogs/${dog.id}`, { breed: "Lab", tracker: "" });
-    expect(edited.body).toMatchObject({ breed: "Lab", tracker: null });
+    expect(edited.body).toMatchObject({ breed: "Lab", tracker: null, alerts: true });
+    expect((await call("PATCH", `/api/dogs/${dog.id}`, { alerts: false })).body.alerts).toBe(false);
     expect((await call("PATCH", "/api/dogs/000000000000000000000000", { name: "x" })).status).toBe(404);
     expect((await call("DELETE", `/api/dogs/${dog.id}`)).status).toBe(200);
     expect(hooks.onDogDeleted).toHaveBeenCalledWith(dog.id);

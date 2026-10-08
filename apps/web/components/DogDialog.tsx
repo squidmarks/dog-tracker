@@ -14,7 +14,7 @@ export function DogDialog({ state, trackers, onClose, onSaved }: {
   state: DogDialogState | null; trackers: Tracker[]; onClose: () => void; onSaved: () => void;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
-  const [form, setForm] = useState({ name: "", emoji: "🐕", color: PALETTE[0], breed: "", notes: "", tracker: "" });
+  const [form, setForm] = useState({ name: "", emoji: "🐕", color: PALETTE[0], breed: "", notes: "", tracker: "", alerts: true });
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const editing = state?.dog;
@@ -26,7 +26,7 @@ export function DogDialog({ state, trackers, onClose, onSaved }: {
       const d = state.dog;
       setForm({
         name: d?.name ?? "", emoji: d?.emoji ?? "🐕", color: d ? dogColor(d) : PALETTE[Math.floor(Math.random() * PALETTE.length)],
-        breed: d?.breed ?? "", notes: d?.notes ?? "", tracker: d?.tracker ?? state.tracker ?? "",
+        breed: d?.breed ?? "", notes: d?.notes ?? "", tracker: d?.tracker ?? state.tracker ?? "", alerts: d?.alerts ?? true,
       });
       setError(null);
       if (!el.open) el.showModal();
@@ -35,13 +35,13 @@ export function DogDialog({ state, trackers, onClose, onSaved }: {
 
   // Trackers a dog may carry: its current one, plus any with a GPS fix that no dog has.
   const options = trackers.filter((t) => t.id === editing?.tracker || (t.dog_id == null && t.has_position));
-  const set = (k: keyof typeof form, v: string) => setForm((f) => ({ ...f, [k]: v }));
+  const set = (k: keyof typeof form, v: string | boolean) => setForm((f) => ({ ...f, [k]: v }));
 
   const save = async (e: React.FormEvent) => {
     e.preventDefault();
     setBusy(true); setError(null);
     try {
-      const body = { name: form.name, emoji: form.emoji, color: form.color, breed: form.breed, notes: form.notes, tracker: form.tracker || null };
+      const body = { name: form.name, emoji: form.emoji, color: form.color, breed: form.breed, notes: form.notes, tracker: form.tracker || null, alerts: form.alerts };
       if (editing) await api.updateDog(editing.id, body as Partial<Dog>);
       else await api.createDog(body as Partial<Dog>);
       onSaved(); onClose();
@@ -88,6 +88,10 @@ export function DogDialog({ state, trackers, onClose, onSaved }: {
             <option value="">None</option>
             {options.map((t) => <option key={t.id} value={t.id}>{trackerLabel(t)}{t.sim ? " (sim)" : ""} · {t.id}</option>)}
           </select>
+        </label>
+        <label className="check">
+          <input type="checkbox" checked={form.alerts} onChange={(e) => set("alerts", e.target.checked)} />
+          Send alerts for this dog (notifications and pop-ups)
         </label>
         {editing && form.tracker !== (editing.tracker ?? "") && editing.tracker && (
           <p className="hint">Swapping collars keeps {editing.name}&apos;s history; the old tracker returns to the inbox.</p>
