@@ -1,7 +1,7 @@
 import express from "express";
 import type { Db, DogInput, DogLive, Settings, ZoneInput } from "./db.js";
 import { decimate } from "./decimate.js";
-import { computeStats, heatCells } from "./stats.js";
+import { computeStats, coverageGaps, heatCells } from "./stats.js";
 import { circleRing } from "./geo.js";
 import type { Hub } from "./hubs.js";
 import type { MeshEvent } from "./decode.js";
@@ -17,6 +17,7 @@ export interface Hooks {
   /** Zones or alert settings changed. */
   onZonesChanged: () => unknown;
   listHubs: () => Promise<Hub[]>;
+  setHubLocation: (id: string, lat: number | null, lon: number | null) => Promise<boolean>;
   notifications: {
     pushoverConfigured: boolean;
     webPushConfigured: boolean;
@@ -137,6 +138,15 @@ export function createApp(db: Db, hooks: Hooks) {
     res.json(heatCells(await db.dogTrack(req.params.id, w.from, w.to), cell));
   });
 
+  // Signal quality along the route, and the stretches where the dog went silent: the coverage map.
+  app.get("/api/dogs/:id/signal", async (req, res) => {
+    const w = windowOf(req, 24 * 7);
+    if (!w) return badRange(res);
+    const track = await db.dogTrack(req.params.id, w.from, w.to);
+    const points = track.filter((p) => p.snr != null || p.rssi != null).map((p) => ({ ts: p.ts, lat: p.lat, lon: p.lon, snr: p.snr, rssi: p.rssi }));
+    res.json({ points: decimate(points, 3000), gaps: coverageGaps(track) });
+  });
+
   // Battery, voltage and collar temperature history, for the battery chart.
   app.get("/api/dogs/:id/telemetry", async (req, res) => {
     const w = windowOf(req, 48);
@@ -199,6 +209,16 @@ export function createApp(db: Db, hooks: Hooks) {
 
   // --- LoRa hubs (gateways) ---
   app.get("/api/hubs", async (_req, res) => res.json(await hooks.listHubs()));
+  // Hubs have no GPS: place one on the map (or clear it with nulls) so range can be measured from it.
+  app.patch("/api/hubs/:id", async (req, res) => {
+    const { lat = null, lon = null } = req.body ?? {};
+    if ((lat === null) !== (lon === null) || (lat !== null && (typeof lat !== "number" || typeof lon !== "number"))) return res.status(400).json({ error: "lat and lon must both be numbers, or both null" });
+    try {
+      if (!(await hooks.setHubLocation(req.params.id, lat, lon))) return res.status(404).json({ error: "unknown hub" });
+      broadcast({ kind: "hubs" });
+      res.json({ ok: true });
+    } catch (e) { res.status(400).json({ error: (e as Error).message }); }
+  });
 
   // --- Activity (events) and alert settings ---
   app.get("/api/events", async (req, res) => res.json(await db.events(Number(req.query.limit ?? 50))));

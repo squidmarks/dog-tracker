@@ -54,6 +54,7 @@ const api = createApp(db, {
   onDogDeleted: ha.onDogDeleted,
   onZonesChanged: async () => { await monitor.reload(true); await ha.onZonesChanged(); },
   listHubs: () => hubs.list(),
+  setHubLocation: (id, lat, lon) => hubs.setLocation(id, lat, lon),
   notifications: {
     pushoverConfigured: notifier.enabled,
     webPushConfigured: pusher.enabled,
@@ -87,7 +88,7 @@ if (config.simDogs > 0) {
   // The simulated dogs live in your real yard zone (and follow it when you redraw it); a plain circle until one exists.
   const getArea = () => { const ring = monitor.playRing(); return ring ? ringArea(centre, ring) : circleArea(config.yard?.radiusM ?? 40); };
   sim = startSimulator({
-    count: config.simDogs, centre, getArea, tickS: config.simTickS,
+    count: config.simDogs, centre, getArea, getHub: () => hubs.located(), tickS: config.simTickS,
     apply: (ev) => enqueue(async () => { if (await db.apply(ev)) await onNewEvent(ev); }),
   });
   console.log(`[sim] ${config.simDogs} simulated trackers around ${centre.lat},${centre.lon}`);

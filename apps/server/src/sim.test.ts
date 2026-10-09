@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { circleRing } from "./geo.js";
 import { afterEach, beforeEach, vi } from "vitest";
 import type { MeshEvent } from "./decode.js";
-import { type Area, bearingDeg, circleArea, isSimNode, ringArea, startSimulator, stepDog, toLatLon, type SimDog } from "./sim.js";
+import { type Area, bearingDeg, circleArea, isSimNode, ringArea, signalAt, startSimulator, stepDog, toLatLon, type SimDog } from "./sim.js";
 
 const dog = (over: Partial<SimDog> = {}): SimDog =>
   ({ id: "!fa000001", name: "t", x: 0, y: 0, heading: 0, scenario: "wander", silentUntil: 0, battery: 80, paused: 0, zoomies: 0, speedNow: 0, ...over });
@@ -103,5 +103,36 @@ describe("zoomies and realistic reports", () => {
       expect(env!.battery).toBeNull();
       expect(env!.temperature).toBeGreaterThan(5);
     });
+  });
+});
+
+describe("signal model", () => {
+  const mid = () => 0.5; // no shadowing, no random loss
+  it("weakens with distance, and gives out beyond the practical range", () => {
+    const near = signalAt(20, mid), mid200 = signalAt(200, mid), far = signalAt(350, mid), gone = signalAt(1500, mid);
+    expect(near.snr).toBeGreaterThan(mid200.snr);
+    expect(mid200.snr).toBeGreaterThan(far.snr);
+    expect(near.rssi).toBeGreaterThan(-90);
+    expect(near.lost).toBe(false);
+    expect(mid200.lost).toBe(false);
+    expect(gone.lost).toBe(true);
+  });
+  it("caps SNR at a believable maximum and handles zero distance", () => {
+    expect(signalAt(0, mid).snr).toBeLessThanOrEqual(12);
+    expect(Number.isFinite(signalAt(0, mid).rssi)).toBe(true);
+  });
+});
+
+describe("a hub placed far away", () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); });
+  it("hears nothing from dogs that are out of its range", () => {
+    const events: MeshEvent[] = [];
+    const sim = startSimulator({ count: 1, centre: { lat: 45, lon: -64 }, getArea: () => circleArea(40), tickS: 5,
+      getHub: () => ({ lat: 45.2, lon: -64 }), apply: (e) => { events.push(e); } });             // ~22 km away
+    vi.advanceTimersByTime(5 * 20 * 1000);
+    sim.stop();
+    expect(events.filter((e) => e.kind === "position")).toHaveLength(0);
+    expect(events.filter((e) => e.kind === "nodeinfo")).toHaveLength(1);     // everything else still flows
   });
 });

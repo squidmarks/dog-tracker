@@ -6,6 +6,7 @@ import { freshDb, hasMongo } from "./testdb.js";
 
 let db: Db, base: string, close: () => void;
 const hooks = { onDogChanged: vi.fn(), onDogDeleted: vi.fn(), onZonesChanged: vi.fn(), listHubs: async () => [],
+  setHubLocation: async (id: string) => id === "!hub00001",
   notifications: { pushoverConfigured: true, webPushConfigured: true, vapidPublicKey: "PUBKEY", testPushover: async () => true, testWebPush: async (e: string) => e === "https://push.example/ok" },
   getSim: () => null };
 const call = async (method: string, path: string, body?: unknown) => {
@@ -71,6 +72,27 @@ describe.skipIf(!hasMongo)("dogs API (Mongo)", () => {
 
     expect((await call("GET", `/api/dogs/${dog.id}/telemetry?from=900&to=1100`)).body).toMatchObject([{ ts: 1015, battery: 71 }]);
     expect((await call("GET", `/api/dogs/${dog.id}/stats?from=5&to=1`)).status).toBe(400);
+  });
+
+  it("serves signal quality along the route with the silent stretches", async () => {
+    const fix = (i: number, ts: number, snr: number) =>
+      db.apply({ kind: "position", node: "!aaaa0001", packetId: 300 + i, gateway: "!g", rssi: -100 + snr, snr, ts, lat: 45 + i / 10_000, lon: -64, alt: null, speed: null, sats: 9 }, ts);
+    for (const [i, ts] of [1000, 1030, 1060, 1090].entries()) await fix(i, ts, 8 - i * 6);       // fading as the dog walks away
+    await fix(9, 2500, -12);                                                                       // then silence, then back
+    const { body: dog } = await call("POST", "/api/dogs", { name: "Ozzie", tracker: "!aaaa0001" });
+    const sig = (await call("GET", `/api/dogs/${dog.id}/signal?from=900&to=3000`)).body;
+    expect(sig.points.map((p: any) => p.snr)).toEqual([8, 2, -4, -10, -12]);
+    expect(sig.points[0]).toHaveProperty("rssi");
+    expect(sig.gaps).toMatchObject([{ seconds: 1410, from: { ts: 1090 }, to: { ts: 2500 } }]);
+    expect((await call("GET", `/api/dogs/${dog.id}/signal?from=5&to=1`)).status).toBe(400);
+  });
+
+  it("places a hub on the map and validates the request", async () => {
+    expect((await call("PATCH", "/api/hubs/!hub00001", { lat: 45.17, lon: -64.75 })).status).toBe(200);
+    expect((await call("PATCH", "/api/hubs/!nobody", { lat: 45.17, lon: -64.75 })).status).toBe(404);
+    expect((await call("PATCH", "/api/hubs/!hub00001", { lat: 45.17 })).status).toBe(400);       // half a location
+    expect((await call("PATCH", "/api/hubs/!hub00001", { lat: "x", lon: "y" })).status).toBe(400);
+    expect((await call("PATCH", "/api/hubs/!hub00001", { lat: null, lon: null })).status).toBe(200); // clears it
   });
 
   it("edits, unlinks and deletes", async () => {

@@ -2,7 +2,11 @@ import { type Collection, MongoClient, MongoServerError, ObjectId } from "mongod
 import type { MeshEvent } from "./decode.js";
 
 /** A stored fix as served to the UI and the stats engine. */
-export interface TrackPoint { ts: number; lat: number; lon: number; speed: number | null; heading: number | null; hdop: number | null; sats: number | null }
+export interface TrackPoint {
+  ts: number; lat: number; lon: number; speed: number | null; heading: number | null; hdop: number | null; sats: number | null;
+  /** Signal at the receiving hub: SNR in dB (the better quality measure for LoRa) and RSSI in dBm. */
+  snr: number | null; rssi: number | null;
+}
 
 export type Db = Awaited<ReturnType<typeof openDb>>;
 
@@ -67,7 +71,11 @@ export const DEFAULT_SETTINGS: Settings = { staleMinutes: 20, lowBatteryPct: 20,
 const NUMERIC_SETTINGS = ["staleMinutes", "lowBatteryPct", "fenceMarginM", "hubSilentMinutes"] as const;
 
 export type HubStatus = "online" | "offline";
-export interface HubDoc { id: string; status: HubStatus; since: number; lastPacket: number | null }
+export interface HubDoc {
+  id: string; status: HubStatus; since: number; lastPacket: number | null;
+  /** Where the hub stands (it has no GPS, so you place it on the map); needed to measure range. */
+  lat?: number | null; lon?: number | null;
+}
 export interface PushSubscriptionDoc {
   endpoint: string; keys: { p256dh: string; auth: string }; label: string; createdAt: number; lastOk?: number;
 }
@@ -105,7 +113,7 @@ export async function openDb(url: string, dbName: string) {
   const zonesCol: Collection<Omit<Zone, "id"> & { _id: ObjectId }> = db.collection("zones");
   const eventsCol: Collection<Omit<DogEvent, "id"> & { _id: ObjectId }> = db.collection("events");
   const settingsCol: Collection<{ _id: string } & Partial<Settings>> = db.collection("settings");
-  const hubsCol: Collection<{ _id: string; status: HubStatus; since: number; lastPacket: number | null }> = db.collection("hubs");
+  const hubsCol: Collection<{ _id: string; status: HubStatus; since: number; lastPacket: number | null; lat?: number | null; lon?: number | null }> = db.collection("hubs");
   const pushCol: Collection<PushSubscriptionDoc> = db.collection("push_subscriptions");
   const telemetryCol: Collection<TelemetryPoint & { node: string }> = db.collection("telemetry");
 
@@ -273,7 +281,7 @@ export async function openDb(url: string, dbName: string) {
         const hi = Math.min(a.until ?? Infinity, untilTs);
         if (Number.isFinite(hi)) ts.$lte = hi;
         for (const p of await positions.find({ node: a.node, ts }).sort({ ts: 1 }).toArray()) {
-          out.push({ ts: p.ts, lat: p.lat, lon: p.lon, speed: p.speed, heading: p.heading ?? null, hdop: p.hdop ?? null, sats: p.sats ?? null });
+          out.push({ ts: p.ts, lat: p.lat, lon: p.lon, speed: p.speed, heading: p.heading ?? null, hdop: p.hdop ?? null, sats: p.sats ?? null, snr: p.snr ?? null, rssi: p.rssi ?? null });
         }
       }
       return out;
@@ -354,8 +362,15 @@ export async function openDb(url: string, dbName: string) {
       return (await hubsCol.find().toArray()).map(({ _id, ...h }) => ({ id: _id, ...h }));
     },
     async saveHub(h: HubDoc): Promise<void> {
-      const { id, ...rest } = h;
+      const { id, lat: _lat, lon: _lon, ...rest } = h;   // location is set separately, so a status save never clobbers it
       await hubsCol.updateOne({ _id: id }, { $set: rest }, { upsert: true });
+    },
+    async setHubLocation(id: string, lat: number | null, lon: number | null): Promise<boolean> {
+      if (lat != null && lon != null && !(lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180)) throw new Error("Location out of range");
+      const result = lat == null || lon == null
+        ? await hubsCol.updateOne({ _id: id }, { $unset: { lat: "" as const, lon: "" as const } })
+        : await hubsCol.updateOne({ _id: id }, { $set: { lat, lon } });
+      return result.matchedCount > 0;
     },
     /** Best display name for a node: its Meshtastic long name, else its id. */
     async nodeName(id: string): Promise<string> {

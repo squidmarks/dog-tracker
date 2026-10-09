@@ -89,6 +89,21 @@ describe.skipIf(!hasMongo)("HubMonitor (Mongo)", () => {
     expect(events[0]).toMatchObject({ type: "hub_offline", alert: true });
   });
 
+  it("remembers where a hub was placed, without losing it when its status changes", async () => {
+    await hubs.onBrokerLog(connect, T0);
+    expect(await hubs.setLocation("!49b7716c", 45.17, -64.75)).toBe(true);
+    expect(await hubs.setLocation("!unknown1", 1, 1)).toBe(false);
+    await hubs.onBrokerLog(dropped, T0 + 100);
+    await hubs.tick(T0 + 200);                                   // goes offline: a status save must not wipe the location
+    const again = new HubMonitor(db, () => {}, 60);
+    await again.load();
+    expect(await again.list()).toMatchObject([{ id: "!49b7716c", status: "offline", lat: 45.17, lon: -64.75 }]);
+    expect(again.located()).toEqual({ lat: 45.17, lon: -64.75 });
+    await again.setLocation("!49b7716c", null, null);
+    expect(again.located()).toBeNull();
+    await expect(hubs.setLocation("!49b7716c", 200, 0)).rejects.toThrow(/out of range/);
+  });
+
   it("ignores clients that aren't hubs and survives a restart", async () => {
     await hubs.onBrokerLog("New client connected from 1.2.3.4:1 as mqttjs_ab12 (p4, c1, k60, u'meshtastic').", T0);
     expect(await hubs.list()).toEqual([]);

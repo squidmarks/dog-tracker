@@ -144,3 +144,30 @@ export function heatCells(input: Fix[], cellM = 5, maxDwellS = 120, maxCells = 5
   return [...cells.values()].map((c) => ({ lat: c.lat / c.n, lon: c.lon / c.n, w: Math.round(c.w) }))
     .sort((a, b) => b.w - a.w).slice(0, maxCells);
 }
+
+export interface GapEnd { ts: number; lat: number; lon: number }
+export interface CoverageGap { from: GapEnd; to: GapEnd; seconds: number }
+
+/**
+ * Stretches where the dog went silent between two reports: where coverage probably dropped out. A gap is a silence
+ * well beyond the dog's normal reporting interval (so a slow-reporting collar isn't flagged all day), and not so long
+ * that it's more likely the collar was simply off or charging.
+ */
+export function coverageGaps(input: Fix[], minGapS = 300, maxGapS = 6 * 3600): CoverageGap[] {
+  const f = cleanFixes(input);
+  if (f.length < 2) return [];
+  const dts = f.slice(1).map((p, i) => p.ts - f[i].ts).filter((d) => d <= 15 * 60).sort((a, b) => a - b);
+  const median = dts.length ? dts[Math.floor(dts.length / 2)] : 0;
+  const threshold = Math.max(minGapS, 4 * median);
+  const gaps: CoverageGap[] = [];
+  for (let i = 1; i < f.length; i++) {
+    const dt = f[i].ts - f[i - 1].ts;
+    if (dt > threshold && dt <= maxGapS) {
+      gaps.push({
+        from: { ts: f[i - 1].ts, lat: f[i - 1].lat, lon: f[i - 1].lon },
+        to: { ts: f[i].ts, lat: f[i].lat, lon: f[i].lon }, seconds: dt,
+      });
+    }
+  }
+  return gaps;
+}

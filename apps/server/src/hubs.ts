@@ -17,7 +17,7 @@ export function parseBrokerLog(line: string): BrokerLogEvent | null {
   return null;
 }
 
-export interface Hub extends HubDoc { name: string }
+export interface Hub extends HubDoc { name: string; lat: number | null; lon: number | null }
 
 interface State extends HubDoc {
   /** Broker's view: true = connected now, false = disconnected, null = unknown (e.g. just after a restart). */
@@ -35,7 +35,7 @@ export class HubMonitor {
   constructor(private db: Db, private emit: (e: DogEvent) => void | Promise<void>, private graceS = 60) {}
 
   async load() {
-    for (const h of await this.db.hubs()) this.hubs.set(h.id, { ...h, connected: null, disconnectedAt: null });
+    for (const h of await this.db.hubs()) this.hubs.set(h.id, { ...h, connected: null, disconnectedAt: null });  // keeps lat/lon too
   }
 
   private async get(id: string, now: number): Promise<State> {
@@ -48,6 +48,14 @@ export class HubMonitor {
     return h;
   }
   private plain = (h: State): HubDoc => ({ id: h.id, status: h.status, since: h.since, lastPacket: h.lastPacket });
+
+  /** Place (or clear, with nulls) a hub on the map. Returns false for a hub we've never heard of. */
+  async setLocation(id: string, lat: number | null, lon: number | null): Promise<boolean> {
+    const h = this.hubs.get(id);
+    if (!h || !(await this.db.setHubLocation(id, lat, lon))) return false;
+    h.lat = lat; h.lon = lon;
+    return true;
+  }
 
   private async setStatus(h: State, status: HubStatus, now: number) {
     if (h.status === status) return;
@@ -100,7 +108,13 @@ export class HubMonitor {
     return this.hubs.size > 0 && [...this.hubs.values()].every((h) => h.status === "offline");
   }
 
+  /** The first hub that's been placed on the map (the simulator measures its distance from it). */
+  located(): { lat: number; lon: number } | null {
+    for (const h of this.hubs.values()) if (h.lat != null && h.lon != null) return { lat: h.lat, lon: h.lon };
+    return null;
+  }
+
   async list(): Promise<Hub[]> {
-    return Promise.all([...this.hubs.values()].map(async (h) => ({ ...this.plain(h), name: await this.db.nodeName(h.id) })));
+    return Promise.all([...this.hubs.values()].map(async (h) => ({ ...this.plain(h), lat: h.lat ?? null, lon: h.lon ?? null, name: await this.db.nodeName(h.id) })));
   }
 }

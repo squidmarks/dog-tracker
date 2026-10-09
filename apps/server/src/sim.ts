@@ -24,6 +24,19 @@ export interface Area { signedDist(x: number, y: number): number; centre: { x: n
 
 const M_PER_DEG_LAT = 111_195;
 
+/**
+ * What a hub `distM` away would measure from a collar on a dog: path loss for a suburban/rural setting (exponent 3.5)
+ * plus a few dB of shadowing, and the point where a long-range LoRa preset stops decoding (~-17.5 dB SNR).
+ * The floor is the radio's noise: SNR is how far the signal sits above it.
+ */
+export function signalAt(distM: number, rand: () => number = Math.random): { rssi: number; snr: number; lost: boolean } {
+  const shadow = (rand() + rand() + rand() - 1.5) * 4;                    // roughly gaussian, mostly within ±6 dB
+  const rssi = -40 - 35 * Math.log10(Math.max(distM, 5)) + shadow;
+  const snr = Math.min(12, rssi + 111);
+  const lost = snr < -17.5 || (snr < -13 && rand() < (-13 - snr) / 4.5);   // right at the edge only some get through
+  return { rssi: Math.round(rssi), snr: Math.round(snr * 4) / 4, lost };
+}
+
 export function toLatLon(ref: { lat: number; lon: number }, x: number, y: number) {
   return { lat: ref.lat + y / M_PER_DEG_LAT, lon: ref.lon + x / (M_PER_DEG_LAT * Math.cos((ref.lat * Math.PI) / 180)) };
 }
@@ -105,6 +118,8 @@ export const bearingDeg = (heading: number) => (((90 - (heading * 180) / Math.PI
 
 export function startSimulator(opts: {
   count: number; centre: { lat: number; lon: number };
+  /** Where the hub is (if you've placed it on the map); otherwise it sits a little off the middle of the yard. */
+  getHub?: () => { lat: number; lon: number } | null;
   /** Called every tick, so the dogs follow the zone as you edit it. */
   getArea: () => Area;
   tickS: number; apply: (ev: MeshEvent) => void;
@@ -119,10 +134,19 @@ export function startSimulator(opts: {
   }));
 
   const nowS = () => Math.floor(Date.now() / 1000);
+  const hubXY = () => {
+    const h = opts.getHub?.();
+    if (!h) return { x: start.centre.x + 25, y: start.centre.y - 15 };
+    const cos = Math.cos((opts.centre.lat * Math.PI) / 180);
+    return { x: (h.lon - opts.centre.lon) * M_PER_DEG_LAT * cos, y: (h.lat - opts.centre.lat) * M_PER_DEG_LAT };
+  };
   const emit = (d: SimDog) => {
     const ll = toLatLon(opts.centre, d.x, d.y);
-    opts.apply({ kind: "position", node: d.id, packetId: packetId++, gateway: "!sim00001", rssi: -70 - Math.hypot(d.x, d.y) / 8,
-      snr: 6, ts: nowS(), lat: ll.lat, lon: ll.lon, alt: 20,
+    const hub = hubXY();
+    const sig = signalAt(Math.hypot(d.x - hub.x, d.y - hub.y));
+    if (sig.lost) return;                                              // out of range: the report never arrives, like the real thing
+    opts.apply({ kind: "position", node: d.id, packetId: packetId++, gateway: "!sim00001", rssi: sig.rssi,
+      snr: sig.snr, ts: nowS(), lat: ll.lat, lon: ll.lon, alt: 20,
       // Like the real collar: ground speed in whole m/s, a heading only while moving, and a plausible precision.
       speed: Math.round(d.speedNow), heading: d.speedNow >= 0.5 ? Math.round(bearingDeg(d.heading)) : null,
       hdop: Math.round((0.8 + Math.random() * 1.0) * 100) / 100, sats: 8 + Math.floor(Math.random() * 4) });

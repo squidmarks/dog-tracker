@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cleanFixes, computeStats, heatCells, simplify, type Fix } from "./stats.js";
+import { cleanFixes, computeStats, coverageGaps, heatCells, simplify, type Fix } from "./stats.js";
 
 const LAT0 = 45, LON0 = -64;
 const M = 111_195, COS = Math.cos((LAT0 * Math.PI) / 180);
@@ -100,5 +100,28 @@ describe("heatCells", () => {
   it("caps the number of cells", () => {
     const fixes = Array.from({ length: 500 }, (_, i) => at(i * 5, i * 20, 0));
     expect(heatCells(fixes, 5, 120, 50)).toHaveLength(50);
+  });
+});
+
+describe("coverageGaps", () => {
+  const steady = (from: number, to: number, step = 30, east = 0) => Array.from({ length: Math.floor((to - from) / step) + 1 }, (_, i) => at(from + i * step, east + i, 0));
+
+  it("finds the silence where coverage dropped out, with where the dog was either side of it", () => {
+    const fixes = [...steady(0, 300), ...steady(1200, 1500, 30, 400)];     // reporting every 30 s, silent from 300 s to 1200 s
+    const gaps = coverageGaps(fixes);
+    expect(gaps).toHaveLength(1);
+    expect(gaps[0]).toMatchObject({ seconds: 900, from: { ts: 300 }, to: { ts: 1200 } });
+    expect(gaps[0].to.lon).toBeGreaterThan(gaps[0].from.lon);
+  });
+
+  it("ignores ordinary spacing and slow reporters, and silences too long to be a signal drop", () => {
+    expect(coverageGaps(steady(0, 3000, 30))).toEqual([]);
+    expect(coverageGaps(steady(0, 6000, 600))).toEqual([]);                // reports every 10 min: not a gap
+    expect(coverageGaps([at(0, 0, 0), at(8 * 3600, 5, 0)])).toEqual([]);   // 8 h: collar off or charging
+  });
+
+  it("handles nothing and one fix", () => {
+    expect(coverageGaps([])).toEqual([]);
+    expect(coverageGaps([at(0, 0, 0)])).toEqual([]);
   });
 });
