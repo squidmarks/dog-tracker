@@ -49,6 +49,30 @@ describe.skipIf(!hasMongo)("dogs API (Mongo)", () => {
     expect((await call("GET", `/api/dogs/${dog.id}/track?from=500&to=100`)).status).toBe(400);
   });
 
+  it("reports stats, heat and telemetry for a dog", async () => {
+    const fix = (i: number, ts: number, lonOff: number, speed: number) =>
+      db.apply({ kind: "position", node: "!aaaa0001", packetId: 100 + i, gateway: "!g", rssi: -80, snr: 5, ts, lat: 45, lon: -64 + lonOff / 78_600, alt: null, speed, sats: 9 }, ts);
+    await fix(0, 1000, 0, 0); await fix(1, 1010, 60, 7); await fix(2, 1020, 90, 3);   // a 90 m dash
+    await db.apply({ kind: "telemetry", node: "!aaaa0001", battery: 71, voltage: 3.9 }, 1015);
+    const { body: dog } = await call("POST", "/api/dogs", { name: "Ozzie", tracker: "!aaaa0001" });
+
+    const stats = (await call("GET", `/api/dogs/${dog.id}/stats?from=900&to=1100`)).body;
+    expect(stats.fixes).toBe(3);
+    expect(stats.distanceM).toBeGreaterThan(80);
+    expect(stats.distanceM).toBeLessThan(100);
+    expect(stats.topSpeed).toMatchObject({ mps: 7, source: "reported" });
+
+    const board = (await call("GET", "/api/stats?from=900&to=1100")).body;
+    expect(board).toMatchObject([{ name: "Ozzie", stats: { fixes: 3 } }]);
+
+    const heat = (await call("GET", `/api/dogs/${dog.id}/heat?from=900&to=1100`)).body;
+    expect(heat.length).toBeGreaterThan(0);
+    expect(heat[0]).toHaveProperty("w");
+
+    expect((await call("GET", `/api/dogs/${dog.id}/telemetry?from=900&to=1100`)).body).toMatchObject([{ ts: 1015, battery: 71 }]);
+    expect((await call("GET", `/api/dogs/${dog.id}/stats?from=5&to=1`)).status).toBe(400);
+  });
+
   it("edits, unlinks and deletes", async () => {
     const { body: dog } = await call("POST", "/api/dogs", { name: "Ozzie", tracker: "!aaaa0001" });
     const edited = await call("PATCH", `/api/dogs/${dog.id}`, { breed: "Lab", tracker: "" });

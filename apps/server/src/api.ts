@@ -1,6 +1,7 @@
 import express from "express";
 import type { Db, DogInput, DogLive, Settings, ZoneInput } from "./db.js";
 import { decimate } from "./decimate.js";
+import { computeStats, heatCells } from "./stats.js";
 import { circleRing } from "./geo.js";
 import type { Hub } from "./hubs.js";
 import type { MeshEvent } from "./decode.js";
@@ -90,16 +91,57 @@ export function createApp(db: Db, hooks: Hooks) {
     res.json({ ok: true });
   });
 
-  // Track for a window: `hours` back from now, or an explicit `from`/`to` (epoch seconds). Capped at 31 days
-  // and thinned to MAX_TRACK_POINTS so a week-long view doesn't ship thousands of points per dog.
-  app.get("/api/dogs/:id/track", async (req, res) => {
+  /** Shared by the track, stats, heat and telemetry endpoints: `from`/`to` (epoch seconds) or `hours` back from now. */
+  const windowOf = (req: express.Request, defaultHours = 24): { from: number; to: number } | null => {
     const nowS = Math.floor(Date.now() / 1000);
     const MAX_SPAN = 31 * 24 * 3600;
-    let to = req.query.to != null ? Number(req.query.to) : nowS;
-    let from = req.query.from != null ? Number(req.query.from) : to - Math.min(Number(req.query.hours ?? 24), 24 * 31) * 3600;
-    if (!Number.isFinite(from) || !Number.isFinite(to) || from >= to) return res.status(400).json({ error: "bad time range" });
+    const to = req.query.to != null ? Number(req.query.to) : nowS;
+    let from = req.query.from != null ? Number(req.query.from) : to - Math.min(Number(req.query.hours ?? defaultHours), 24 * 31) * 3600;
+    if (!Number.isFinite(from) || !Number.isFinite(to) || from >= to) return null;
     from = Math.max(from, to - MAX_SPAN);
-    res.json(decimate(await db.dogTrack(req.params.id, from, to), MAX_TRACK_POINTS));
+    return { from, to };
+  };
+  const badRange = (res: express.Response) => res.status(400).json({ error: "bad time range" });
+
+  // Track for a window, capped at 31 days and thinned to MAX_TRACK_POINTS so a week-long view doesn't ship
+  // thousands of points per dog.
+  app.get("/api/dogs/:id/track", async (req, res) => {
+    const w = windowOf(req);
+    if (!w) return badRange(res);
+    res.json(decimate(await db.dogTrack(req.params.id, w.from, w.to), MAX_TRACK_POINTS));
+  });
+
+  // Distance, top speed and moving time for one dog over a window.
+  app.get("/api/dogs/:id/stats", async (req, res) => {
+    const w = windowOf(req);
+    if (!w) return badRange(res);
+    res.json(computeStats(await db.dogTrack(req.params.id, w.from, w.to)));
+  });
+
+  // Stats for every dog at once (the leaderboard).
+  app.get("/api/stats", async (req, res) => {
+    const w = windowOf(req);
+    if (!w) return badRange(res);
+    const dogs = await db.dogs();
+    res.json(await Promise.all(dogs.map(async (d) => ({
+      dogId: d.id, name: d.name, emoji: d.emoji, color: d.color, sim: isSimNode(d.tracker ?? ""),
+      stats: computeStats(await db.dogTrack(d.id, w.from, w.to)),
+    }))));
+  });
+
+  // Where the dog spent its time: aggregated cells weighted by seconds, for the heat map (long views).
+  app.get("/api/dogs/:id/heat", async (req, res) => {
+    const w = windowOf(req);
+    if (!w) return badRange(res);
+    const cell = Math.min(50, Math.max(2, Number(req.query.cell ?? 5)));
+    res.json(heatCells(await db.dogTrack(req.params.id, w.from, w.to), cell));
+  });
+
+  // Battery, voltage and collar temperature history, for the battery chart.
+  app.get("/api/dogs/:id/telemetry", async (req, res) => {
+    const w = windowOf(req, 48);
+    if (!w) return badRange(res);
+    res.json(decimate(await db.dogTelemetry(req.params.id, w.from, w.to), 600));
   });
 
   // --- Zones ---

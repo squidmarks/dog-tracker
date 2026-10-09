@@ -64,6 +64,24 @@ describe.skipIf(!hasMongo)("trackers and dogs (Mongo)", () => {
     expect((await db.dogTrack(id, 250)).map((p) => p.ts)).toEqual([300, 400]);
   });
 
+  it("keeps telemetry history without letting environment packets blank the battery", async () => {
+    await pos("!aaaa0001", 1, 100);
+    const id = await db.createDog({ name: "Ozzie", tracker: "!aaaa0001" }, 50);
+    await db.apply({ kind: "telemetry", node: "!aaaa0001", battery: 80, voltage: 4.0 }, 200);
+    await db.apply({ kind: "telemetry", node: "!aaaa0001", battery: null, voltage: null, temperature: 18.5, lux: 30 }, 300);
+    await db.apply({ kind: "telemetry", node: "!aaaa0001", battery: 78, voltage: 3.98 }, 400);
+    expect(await db.dog(id)).toMatchObject({ battery: 78, temperature: 18.5, lux: 30 });
+    expect((await db.dogTelemetry(id, 0)).map((t) => [t.ts, t.battery, t.temperature])).toEqual([[200, 80, null], [300, null, 18.5], [400, 78, null]]);
+    expect((await db.dogTelemetry(id, 250, 350)).map((t) => t.ts)).toEqual([300]);
+  });
+
+  it("stores heading and precision with positions", async () => {
+    await db.apply({ kind: "position", node: "!aaaa0001", packetId: 1, gateway: "!g", rssi: -80, snr: 5, ts: 100, lat: 45, lon: -64, alt: null, speed: 7, sats: 9, heading: 135, hdop: 0.9 }, 100);
+    const id = await db.createDog({ name: "Ozzie", tracker: "!aaaa0001" });
+    expect(await db.dog(id)).toMatchObject({ speed: 7, heading: 135, hdop: 0.9 });
+    expect((await db.dogTrack(id, 0))[0]).toMatchObject({ speed: 7, heading: 135, hdop: 0.9, sats: 9 });
+  });
+
   it("a failed swap leaves the dog on its current tracker", async () => {
     await pos("!aaaa0001", 1, 100);
     await pos("!bbbb0002", 2, 100);

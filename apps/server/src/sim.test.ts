@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { circleRing } from "./geo.js";
-import { type Area, circleArea, isSimNode, ringArea, stepDog, toLatLon, type SimDog } from "./sim.js";
+import { afterEach, beforeEach, vi } from "vitest";
+import type { MeshEvent } from "./decode.js";
+import { type Area, bearingDeg, circleArea, isSimNode, ringArea, startSimulator, stepDog, toLatLon, type SimDog } from "./sim.js";
 
 const dog = (over: Partial<SimDog> = {}): SimDog =>
-  ({ id: "!fa000001", name: "t", x: 0, y: 0, heading: 0, scenario: "wander", silentUntil: 0, battery: 80, paused: 0, ...over });
+  ({ id: "!fa000001", name: "t", x: 0, y: 0, heading: 0, scenario: "wander", silentUntil: 0, battery: 80, paused: 0, zoomies: 0, speedNow: 0, ...over });
 
 const run = (d: SimDog, area: Area, steps: number, dt: number, until?: () => boolean) => {
   for (let i = 0; i < steps && !(until?.()); i++) stepDog(d, dt, area);
@@ -58,5 +60,48 @@ describe("simulator", () => {
   it("builds a ring area whose centre is inside the ring", () => {
     const area = ringArea({ lat: 45, lon: -64 }, circleRing(45, -64, 30));
     expect(area.signedDist(area.centre.x, area.centre.y)).toBeLessThan(0);
+  });
+});
+
+describe("zoomies and realistic reports", () => {
+  it("sprints at real dog speeds, stays inside the yard, then calms down", () => {
+    const area = circleArea(40);
+    const d = dog({ scenario: "zoomies", zoomies: 30 });
+    let top = 0;
+    for (let i = 0; i < 30 && d.scenario === "zoomies"; i++) {
+      stepDog(d, 1, area);
+      top = Math.max(top, d.speedNow);
+      expect(area.signedDist(d.x, d.y)).toBeLessThan(0);
+    }
+    expect(top).toBeGreaterThan(6);
+    expect(top).toBeLessThan(12);
+    expect(d.scenario).toBe("wander");
+  });
+
+  it("converts the sim's heading to a compass bearing", () => {
+    expect(bearingDeg(0)).toBeCloseTo(90);              // heading east
+    expect(bearingDeg(Math.PI / 2)).toBeCloseTo(0);     // heading north
+    expect(bearingDeg(Math.PI)).toBeCloseTo(270);       // heading west
+  });
+
+  describe("emitted reports", () => {
+    beforeEach(() => { vi.useFakeTimers(); });
+    afterEach(() => { vi.useRealTimers(); });
+
+    it("send whole-number speeds, a heading only while moving, a precision, and environment telemetry", () => {
+      const events: MeshEvent[] = [];
+      const sim = startSimulator({ count: 1, centre: { lat: 45, lon: -64 }, getArea: () => circleArea(40), tickS: 5, apply: (e) => { events.push(e); } });
+      sim.trigger("!fa000001", "zoomies");
+      vi.advanceTimersByTime(5 * 31 * 1000);            // 31 ticks: past the first environment reading
+      sim.stop();
+      const fixes = events.filter((e) => e.kind === "position") as Extract<MeshEvent, { kind: "position" }>[];
+      expect(fixes.length).toBeGreaterThan(20);
+      for (const f of fixes) { expect(Number.isInteger(f.speed)).toBe(true); expect(f.hdop).toBeGreaterThan(0); }
+      expect(fixes.some((f) => (f.speed ?? 0) >= 5 && f.heading != null && f.heading >= 0 && f.heading < 360)).toBe(true);
+      const env = events.find((e) => e.kind === "telemetry" && e.temperature != null) as Extract<MeshEvent, { kind: "telemetry" }> | undefined;
+      expect(env).toBeDefined();
+      expect(env!.battery).toBeNull();
+      expect(env!.temperature).toBeGreaterThan(5);
+    });
   });
 });

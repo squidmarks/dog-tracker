@@ -26,9 +26,22 @@ export function decryptPacket(key: Buffer, packetId: number, fromNode: number, d
 
 export type MeshEvent =
   | { kind: "position"; node: string; packetId: number; gateway: string; rssi: number | null; snr: number | null;
-      ts: number; lat: number; lon: number; alt: number | null; speed: number | null; sats: number | null }
+      ts: number; lat: number; lon: number; alt: number | null; speed: number | null; sats: number | null;
+      /** Direction of travel in degrees from true north (0-360), when the collar sent one. */
+      heading?: number | null;
+      /** Dilution of precision (lower is better; ~1 is excellent, >5 is poor), when the collar sent one. */
+      hdop?: number | null }
   | { kind: "nodeinfo"; node: string; longName: string; shortName: string }
-  | { kind: "telemetry"; node: string; battery: number | null; voltage: number | null };
+  /** Device metrics carry battery/voltage; environment metrics carry the on-board temperature/light sensors. */
+  | { kind: "telemetry"; node: string; battery: number | null; voltage: number | null;
+      temperature?: number | null; lux?: number | null };
+
+/** Meshtastic's ground_track is 1e-5 degrees in current firmware (1/100 degree in older docs): tell them apart by size. */
+export function headingDegrees(groundTrack: number | undefined, groundSpeed: number | undefined): number | null {
+  if (!groundTrack || !groundSpeed) return null; // a heading means nothing when the dog isn't moving
+  const deg = groundTrack > 36_000 ? groundTrack / 1e5 : groundTrack / 100;
+  return ((deg % 360) + 360) % 360;
+}
 
 export const nodeId = (n: number) => "!" + (n >>> 0).toString(16).padStart(8, "0");
 
@@ -70,6 +83,8 @@ export function decodeEnvelope(payload: Uint8Array, key: Buffer): MeshEvent[] {
           kind: "position", node, packetId: pkt.id, gateway, rssi, snr, ts,
           lat: p.latitudeI / 1e7, lon: p.longitudeI / 1e7,
           alt: p.altitude ?? null, speed: p.groundSpeed ?? null, sats: p.satsInView || null,
+          heading: headingDegrees(p.groundTrack, p.groundSpeed),
+          hdop: p.HDOP ? p.HDOP / 100 : p.PDOP ? p.PDOP / 100 : null,
         }];
       }
       case Portnums.PortNum.NODEINFO_APP: {
@@ -78,9 +93,16 @@ export function decodeEnvelope(payload: Uint8Array, key: Buffer): MeshEvent[] {
       }
       case Portnums.PortNum.TELEMETRY_APP: {
         const t = fromBinary(Telemetry.TelemetrySchema, data.payload);
-        if (t.variant.case !== "deviceMetrics") return [];
-        const m = t.variant.value;
-        return [{ kind: "telemetry", node, battery: m.batteryLevel ?? null, voltage: m.voltage ?? null }];
+        if (t.variant.case === "deviceMetrics") {
+          const m = t.variant.value;
+          return [{ kind: "telemetry", node, battery: m.batteryLevel ?? null, voltage: m.voltage ?? null }];
+        }
+        if (t.variant.case === "environmentMetrics") {
+          const m = t.variant.value;
+          // The T1000-E's thermistor and light sensor arrive here. 0 is "not measured" for lux; temperature can be 0 °C.
+          return [{ kind: "telemetry", node, battery: null, voltage: null, temperature: m.temperature ?? null, lux: m.lux || null }];
+        }
+        return [];
       }
     }
   } catch {

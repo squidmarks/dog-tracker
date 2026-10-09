@@ -1,6 +1,9 @@
 import { type Collection, MongoClient, MongoServerError, ObjectId } from "mongodb";
 import type { MeshEvent } from "./decode.js";
 
+/** A stored fix as served to the UI and the stats engine. */
+export interface TrackPoint { ts: number; lat: number; lon: number; speed: number | null; heading: number | null; hdop: number | null; sats: number | null }
+
 export type Db = Awaited<ReturnType<typeof openDb>>;
 
 export interface DogInput {
@@ -15,11 +18,14 @@ export interface DogLive { id: string; name: string; tracker: string | null; [k:
 
 interface NodeDoc {
   _id: string; long_name?: string | null; short_name?: string | null;
-  battery?: number | null; voltage?: number | null; last_heard?: number;
+  battery?: number | null; voltage?: number | null; temperature?: number | null; lux?: number | null; last_heard?: number;
 }
+/** One telemetry reading, kept for charts (battery life) and trends. */
+export interface TelemetryPoint { ts: number; battery: number | null; voltage: number | null; temperature: number | null; lux: number | null }
 interface PositionDoc {
   node: string; packet_id: number; ts: number; lat: number; lon: number;
   alt: number | null; speed: number | null; sats: number | null; gateway: string | null; rssi: number | null; snr: number | null;
+  heading?: number | null; hdop?: number | null;
 }
 interface DogDoc { _id: ObjectId; name: string; color: string | null; emoji: string | null; breed: string | null; notes: string | null; alerts?: boolean; created_at: number }
 /** Assignment history: a dog's track is the positions of whichever tracker it carried at the time.
@@ -101,6 +107,7 @@ export async function openDb(url: string, dbName: string) {
   const settingsCol: Collection<{ _id: string } & Partial<Settings>> = db.collection("settings");
   const hubsCol: Collection<{ _id: string; status: HubStatus; since: number; lastPacket: number | null }> = db.collection("hubs");
   const pushCol: Collection<PushSubscriptionDoc> = db.collection("push_subscriptions");
+  const telemetryCol: Collection<TelemetryPoint & { node: string }> = db.collection("telemetry");
 
   await positions.createIndex({ node: 1, packet_id: 1 }, { unique: true }); // several base stations can uplink the same packet
   await positions.createIndex({ node: 1, ts: -1 });
@@ -109,11 +116,13 @@ export async function openDb(url: string, dbName: string) {
   await assignments.createIndex({ dogId: 1, since: 1 });
   await eventsCol.createIndex({ ts: -1 });
   await pushCol.createIndex({ endpoint: 1 }, { unique: true });
+  await telemetryCol.createIndex({ node: 1, ts: -1 });
 
   const latestPosition = (node: string) => positions.find({ node }).sort({ ts: -1 }).limit(1).next();
 
   const liveFields = (n: NodeDoc | null, p: PositionDoc | null) => ({
-    battery: n?.battery ?? null, voltage: n?.voltage ?? null, last_heard: n?.last_heard ?? null,
+    battery: n?.battery ?? null, voltage: n?.voltage ?? null, temperature: n?.temperature ?? null, lux: n?.lux ?? null,
+    last_heard: n?.last_heard ?? null, heading: p?.heading ?? null, hdop: p?.hdop ?? null,
     lat: p?.lat ?? null, lon: p?.lon ?? null, pos_ts: p?.ts ?? null, speed: p?.speed ?? null, sats: p?.sats ?? null,
     gateway: p?.gateway ?? null, rssi: p?.rssi ?? null, snr: p?.snr ?? null,
   });
@@ -152,7 +161,7 @@ export async function openDb(url: string, dbName: string) {
           try {
             await positions.insertOne({
               node: ev.node, packet_id: ev.packetId, ts: ev.ts, lat: ev.lat, lon: ev.lon, alt: ev.alt, speed: ev.speed,
-              sats: ev.sats, gateway: ev.gateway, rssi: ev.rssi, snr: ev.snr,
+              sats: ev.sats, gateway: ev.gateway, rssi: ev.rssi, snr: ev.snr, heading: ev.heading ?? null, hdop: ev.hdop ?? null,
             });
             return true;
           } catch (e) {
@@ -162,10 +171,20 @@ export async function openDb(url: string, dbName: string) {
         case "nodeinfo":
           await nodes.updateOne({ _id: ev.node }, { $set: { long_name: ev.longName, short_name: ev.shortName } });
           return true;
-        case "telemetry":
-          // 101 = "powered/charging" in Meshtastic; keep it, the UI interprets it.
-          await nodes.updateOne({ _id: ev.node }, { $set: { battery: ev.battery, voltage: ev.voltage } });
+        case "telemetry": {
+          // 101 = "powered/charging" in Meshtastic; keep it, the UI interprets it. Environment packets carry no
+          // battery, so only the fields actually present are written (they mustn't blank each other out).
+          const set: Partial<NodeDoc> = {};
+          if (ev.battery != null) set.battery = ev.battery;
+          if (ev.voltage != null) set.voltage = ev.voltage;
+          if (ev.temperature != null) set.temperature = ev.temperature;
+          if (ev.lux != null) set.lux = ev.lux;
+          if (Object.keys(set).length) {
+            await nodes.updateOne({ _id: ev.node }, { $set: set });
+            await telemetryCol.insertOne({ node: ev.node, ts: at, battery: ev.battery ?? null, voltage: ev.voltage ?? null, temperature: ev.temperature ?? null, lux: ev.lux ?? null });
+          }
           return true;
+        }
       }
     },
 
@@ -248,13 +267,29 @@ export async function openDb(url: string, dbName: string) {
     async dogTrack(id: string, sinceTs: number, untilTs = Infinity) {
       const _id = oid(id);
       if (!_id) return [];
-      const out: { ts: number; lat: number; lon: number; speed: number | null }[] = [];
+      const out: TrackPoint[] = [];
       for (const a of await assignments.find({ dogId: _id }).sort({ since: 1 }).toArray()) {
         const ts: Record<string, number> = { $gte: Math.max(a.since, sinceTs) };
         const hi = Math.min(a.until ?? Infinity, untilTs);
         if (Number.isFinite(hi)) ts.$lte = hi;
         for (const p of await positions.find({ node: a.node, ts }).sort({ ts: 1 }).toArray()) {
-          out.push({ ts: p.ts, lat: p.lat, lon: p.lon, speed: p.speed });
+          out.push({ ts: p.ts, lat: p.lat, lon: p.lon, speed: p.speed, heading: p.heading ?? null, hdop: p.hdop ?? null, sats: p.sats ?? null });
+        }
+      }
+      return out;
+    },
+
+    /** The dog's telemetry over a window (battery, voltage, collar temperature), across whichever collars it wore. */
+    async dogTelemetry(id: string, sinceTs: number, untilTs = Infinity): Promise<TelemetryPoint[]> {
+      const _id = oid(id);
+      if (!_id) return [];
+      const out: TelemetryPoint[] = [];
+      for (const a of await assignments.find({ dogId: _id }).sort({ since: 1 }).toArray()) {
+        const ts: Record<string, number> = { $gte: Math.max(a.since, sinceTs) };
+        const hi = Math.min(a.until ?? Infinity, untilTs);
+        if (Number.isFinite(hi)) ts.$lte = hi;
+        for (const t of await telemetryCol.find({ node: a.node, ts }).sort({ ts: 1 }).toArray()) {
+          out.push({ ts: t.ts, battery: t.battery, voltage: t.voltage, temperature: t.temperature, lux: t.lux });
         }
       }
       return out;
@@ -355,7 +390,7 @@ export async function openDb(url: string, dbName: string) {
     },
 
     /** Test helper: empty every collection (the app user can't drop databases, by design). */
-    wipe: async () => { await Promise.all([nodes, positions, dogsCol, assignments, zonesCol, eventsCol, settingsCol, hubsCol, pushCol].map((c: Collection<any>) => c.deleteMany({}))); },
+    wipe: async () => { await Promise.all([nodes, positions, dogsCol, assignments, zonesCol, eventsCol, settingsCol, hubsCol, pushCol, telemetryCol].map((c: Collection<any>) => c.deleteMany({}))); },
     close: () => client.close(),
   };
   return api;

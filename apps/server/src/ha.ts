@@ -3,6 +3,7 @@ import { config } from "./config.js";
 import type { Db, DogEvent, Zone } from "./db.js";
 import type { Hub } from "./hubs.js";
 import type { Monitor } from "./rules.js";
+import { computeStats, type Stats } from "./stats.js";
 
 const PREFIX = "dogtracker";
 export const STATUS_TOPIC = `${PREFIX}/status`;
@@ -15,7 +16,7 @@ interface DogRow {
   id: string; name: string;
   battery: number | null; last_heard: number | null;
   lat: number | null; lon: number | null; pos_ts: number | null;
-  speed: number | null; sats: number | null; gateway: string | null; rssi: number | null;
+  speed: number | null; sats: number | null; gateway: string | null; rssi: number | null; temperature?: number | null;
 }
 
 const topics = (dogId: string) => {
@@ -51,11 +52,31 @@ export function discoveryMessages(dog: Pick<DogRow, "id" | "name">, zones: Pick<
     cfg("sensor", "signal", {
       name: "Signal", state_topic: t("rssi"), device_class: "signal_strength", unit_of_measurement: "dBm", entity_category: "diagnostic",
     }),
+    // Activity today (the server's local day). SI units: Home Assistant shows them in your own unit system.
+    cfg("sensor", "distance_today", {
+      name: "Distance today", state_topic: t("distance_today"), device_class: "distance", unit_of_measurement: "m",
+      state_class: "measurement", suggested_display_precision: 0, icon: "mdi:map-marker-distance",
+    }),
+    cfg("sensor", "top_speed_today", {
+      name: "Top speed today", state_topic: t("top_speed"), device_class: "speed", unit_of_measurement: "m/s",
+      state_class: "measurement", suggested_display_precision: 1, icon: "mdi:speedometer",
+    }),
+    cfg("sensor", "moving_today", {
+      name: "Active time today", state_topic: t("moving_min"), device_class: "duration", unit_of_measurement: "min",
+      state_class: "measurement", icon: "mdi:run-fast",
+    }),
+    cfg("sensor", "collar_temperature", {
+      name: "Collar temperature", state_topic: t("temperature"), device_class: "temperature", unit_of_measurement: "°C",
+      state_class: "measurement", entity_category: "diagnostic",
+    }),
     cfg("sensor", "satellites", { name: "Satellites", state_topic: t("sats"), entity_category: "diagnostic", icon: "mdi:satellite-variant" }),
   ];
 }
 
-const STATE_LEAVES = ["attributes", "tracker_state", "battery", "last_seen", "rssi", "sats", "reporting"];
+const STATE_LEAVES = ["attributes", "tracker_state", "battery", "last_seen", "rssi", "sats", "reporting", "distance_today", "top_speed", "moving_min", "temperature"];
+
+/** Start of the server's local day (set TZ on the container), as epoch seconds. */
+export const startOfToday = (now = new Date()) => { const d = new Date(now); d.setHours(0, 0, 0, 0); return Math.floor(d.getTime() / 1000); };
 
 /** Publishes every dog that has reported a position to Home Assistant over MQTT Discovery. */
 export function startHa(client: MqttClient, db: Db, monitor: Monitor, listHubs: () => Promise<Hub[]> = async () => []) {
@@ -80,7 +101,7 @@ export function startHa(client: MqttClient, db: Db, monitor: Monitor, listHubs: 
     published.set(d.id, now);
   };
 
-  const publishState = (d: DogRow, now = Date.now() / 1000) => {
+  const publishState = (d: DogRow, now = Date.now() / 1000, today?: Stats) => {
     const { t, zone } = topics(d.id);
     if (d.lat != null && d.lon != null) {
       pub(t("attributes"), {
@@ -102,6 +123,12 @@ export function startHa(client: MqttClient, db: Db, monitor: Monitor, listHubs: 
     pub(t("last_seen"), iso(d.last_heard));
     if (d.rssi != null) pub(t("rssi"), String(Math.round(d.rssi)));
     if (d.sats != null) pub(t("sats"), String(d.sats));
+    if (d.temperature != null) pub(t("temperature"), String(d.temperature));
+    if (today) {
+      pub(t("distance_today"), String(Math.round(today.distanceM)));
+      pub(t("moving_min"), String(Math.round(today.movingS / 60)));
+      pub(t("top_speed"), today.topSpeed ? String(Math.round(today.topSpeed.mps * 10) / 10) : "0");
+    }
     pub(t("reporting"), d.last_heard && now - d.last_heard <= staleS() ? "ON" : "OFF");
   };
 
@@ -136,9 +163,10 @@ export function startHa(client: MqttClient, db: Db, monitor: Monitor, listHubs: 
     syncing = true;
     try {
       staleMinutes = (await db.settings()).staleMinutes;
+      const since = startOfToday();
       for (const d of await tracked()) {
         if (!known.has(d.id)) { publishDiscovery(d); known.add(d.id); }
-        publishState(d);
+        publishState(d, Date.now() / 1000, computeStats(await db.dogTrack(d.id, since)));
       }
       await publishHubs();
     } catch (e) { console.error("[ha]", e); }

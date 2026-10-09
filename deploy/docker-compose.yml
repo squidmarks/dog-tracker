@@ -20,6 +20,7 @@ services:
       CHANNEL_PSK: ${CHANNEL_PSK:?set CHANNEL_PSK}
       MONGO_URL: mongodb://${MONGO_USER:?set MONGO_USER}:${MONGO_PASSWORD:?set MONGO_PASSWORD}@mongo-mongo-1:27017/?authSource=admin
       MONGO_DB: dogtracker
+      TZ: ${TZ:-America/Halifax}   # "today" in the activity sensors is the local day
       YARD_LAT: ${YARD_LAT:-}
       YARD_LON: ${YARD_LON:-}
       YARD_RADIUS_M: ${YARD_RADIUS_M:-40}
