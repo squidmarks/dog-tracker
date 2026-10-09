@@ -152,3 +152,5 @@ h2 .seg.small { margin-right: 4px; }
 .snoozebtns { display: inline-flex; gap: 6px; }
 .event.snoozed { opacity: .72; }
 .badge.quiet { background: #8a8f98; margin-left: 6px; }
+
+.snooze button.startwalk { background: #2e86ab; border-color: #2e86ab; color: #fff; font-weight: 600; padding: 4px 14px; }

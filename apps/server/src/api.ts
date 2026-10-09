@@ -208,16 +208,22 @@ export function createApp(db: Db, hooks: Hooks) {
     ok ? res.json({ ok: true }) : res.status(502).json({ error: hooks.notifications.pushoverConfigured ? "Pushover rejected the message" : "Pushover isn't configured on the server" });
   });
 
-  // --- Walking mode: snooze the exit/silence alerts for a while ---
-  const MAX_SNOOZE_MIN = 8 * 60;
-  const snoozeState = async () => { const until = await db.snooze(); return { active: until != null, until }; };
+  // --- Walking mode: quiet the exit/silence alerts for a walk ---
+  // Either `{ minutes }` (a timer) or `{ untilBack: true }` (ends by itself when the dogs are home; capped at 6 h).
+  const MAX_SNOOZE_MIN = 8 * 60, WALK_CAP_MIN = 6 * 60;
+  const snoozeState = async () => {
+    const w = await db.walk();
+    return { active: !!w, until: w?.until ?? null, mode: w?.mode ?? null, armed: w?.armed ?? false };
+  };
   app.get("/api/snooze", async (_req, res) => res.json(await snoozeState()));
   app.put("/api/snooze", async (req, res) => {
-    const minutes = req.body?.minutes;
+    const { minutes, untilBack } = req.body ?? {};
     if (minutes != null && (typeof minutes !== "number" || !Number.isFinite(minutes) || minutes < 0 || minutes > MAX_SNOOZE_MIN)) {
       return res.status(400).json({ error: `minutes must be between 0 and ${MAX_SNOOZE_MIN}, or null to end walking mode` });
     }
-    await db.setSnooze(minutes ? Math.floor(Date.now() / 1000) + Math.round(minutes * 60) : null);
+    const nowS = Math.floor(Date.now() / 1000);
+    if (untilBack === true) await db.setSnooze(nowS + WALK_CAP_MIN * 60, { mode: "return", startedAt: nowS });
+    else await db.setSnooze(minutes ? nowS + Math.round(minutes * 60) : null);
     await hooks.onSnoozeChanged();
     broadcast({ kind: "snooze" });
     res.json(await snoozeState());

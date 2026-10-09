@@ -7,7 +7,7 @@ import { computeStats, type Stats } from "./stats.js";
 
 const PREFIX = "dogtracker";
 export const STATUS_TOPIC = `${PREFIX}/status`;
-const EVENT_TYPES = ["zone_exit", "zone_enter", "silent", "reporting", "low_battery", "battery_ok", "snooze_ended"];
+const EVENT_TYPES = ["zone_exit", "zone_enter", "silent", "reporting", "low_battery", "battery_ok", "snooze_ended", "walk_ended"];
 
 /** Home Assistant entities hang off the DOG (not the radio), so they survive a collar swap. */
 const slug = (dogId: string) => `dog${dogId}`;

@@ -1,4 +1,4 @@
-import type { Dog, DogEvent, HeatCell, Hub, LeaderRow, Notifications, Settings, Signal, SimState, Stats, TelemetryPoint, Tracker, TrackPoint, Zone } from "./types";
+import type { Dog, DogEvent, HeatCell, Hub, LeaderRow, Notifications, Settings, Signal, SimState, Stats, TelemetryPoint, Tracker, TrackPoint, WalkState, Zone } from "./types";
 
 async function json<T>(res: Response): Promise<T> {
   const body = await res.json().catch(() => ({}));
@@ -30,8 +30,10 @@ export const api = {
   placeHub: (id: string, lat: number | null, lon: number | null) => send("PATCH", `/api/hubs/${encodeURIComponent(id)}`, { lat, lon }).then((r) => json<{ ok: true }>(r)),
   heat: (dogId: string, from: number, to: number) => fetch(`/api/dogs/${dogId}/heat?from=${Math.floor(from)}&to=${Math.ceil(to)}`).then((r) => json<HeatCell[]>(r)),
   telemetry: (dogId: string, hours = 24) => fetch(`/api/dogs/${dogId}/telemetry?hours=${hours}`).then((r) => json<TelemetryPoint[]>(r)),
-  snooze: () => fetch("/api/snooze").then((r) => json<{ active: boolean; until: number | null }>(r)),
-  setSnooze: (minutes: number | null) => send("PUT", "/api/snooze", { minutes }).then((r) => json<{ active: boolean; until: number | null }>(r)),
+  walk: () => fetch("/api/snooze").then((r) => json<WalkState>(r)),
+  /** Quiet the exit/silence alerts until every dog is back home (capped at 6 h by the server). */
+  startWalk: () => send("PUT", "/api/snooze", { untilBack: true }).then((r) => json<WalkState>(r)),
+  endWalk: () => send("PUT", "/api/snooze", { minutes: null }).then((r) => json<WalkState>(r)),
   hubs: () => fetch("/api/hubs").then((r) => json<Hub[]>(r)),
   notifications: () => fetch("/api/notifications").then((r) => json<Notifications>(r)),
   subscribePush: (subscription: PushSubscriptionJSON, label: string) =>

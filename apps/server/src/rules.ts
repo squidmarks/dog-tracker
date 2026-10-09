@@ -21,6 +21,8 @@ export class Monitor {
   private lastMargin = -1;
   /** Whether walking mode was on at the last look, so we notice the moment it ends. */
   private wasSnoozed = false;
+  /** A walk nobody leaves for is cancelled after this long (you started it, then changed your mind). */
+  static readonly WALK_NOBODY_LEFT_S = 20 * 60;
 
   /** `hubsDown` reports that no hub is online, so silent dogs are explained by that one alert instead of one each. */
   constructor(private db: Db, private emit: Emit, private hubsDown: () => boolean = () => false) {}
@@ -61,12 +63,13 @@ export class Monitor {
     const id = await this.db.dogIdForNode(node);
     if (!id) return;
     const dog = (await this.db.dog(id)) as unknown as LiveDog | undefined;
-    if (dog) await this.observe(dog, lat, lon);
+    if (dog) { await this.observe(dog, lat, lon); await this.evaluateWalk(); }
   }
 
   /** Periodic checks for silence and low battery. `now` is injectable for tests. */
   async tick(now = Math.floor(Date.now() / 1000)) {
     await this.checkSnoozeEnded(now);
+    await this.evaluateWalk(now);
     const settings = await this.db.settings();
     for (const dog of (await this.db.dogs()) as unknown as LiveDog[]) {
       if (!dog.tracker) continue;
@@ -96,6 +99,44 @@ export class Monitor {
         if (!first) await this.event(dog, "battery_ok", false, `${dog.name}'s battery is back to ${dog.battery! > 100 ? "charging" : dog.battery + "%"}`);
       }
     }
+  }
+
+  /** A dog counts as "back" when it is inside one of its home zones (else any zone that alerts on exit), and reporting. */
+  private isBack(dog: LiveDog): boolean {
+    const mine = this.zonesFor(dog.id);
+    const targets = mine.some((z) => z.home) ? mine.filter((z) => z.home) : mine.filter((z) => alerts(z, "exit"));
+    if (!targets.length) return true;                                  // no zones to be outside of
+    if (this.flags.get(dog.id)?.silent) return false;                  // can't confirm a dog we can't hear
+    return targets.some((z) => this.membership.isInside(`${dog.id}:${z.id}`) === true);
+  }
+
+  /**
+   * "Until they're back" walks: arm once a dog has left, end quietly when every dog is home again, or cancel if nobody
+   * ever left. (Timer walks and the safety cap are handled by checkSnoozeEnded.)
+   */
+  async evaluateWalk(now = Math.floor(Date.now() / 1000)) {
+    const walk = await this.db.walk(now);
+    if (!walk || walk.mode !== "return") return;
+    const dogs = ((await this.db.dogs()) as unknown as LiveDog[]).filter((d) => d.tracker && d.alerts !== false && d.lat != null);
+    if (!dogs.length) return;
+    const away = dogs.filter((d) => !this.isBack(d));
+    if (!walk.armed) {
+      if (away.length) await this.db.armWalk();
+      else if (now - walk.startedAt > Monitor.WALK_NOBODY_LEFT_S) { await this.endWalk("Walking mode cancelled: nobody left the yard", dogs[0]); }
+      return;
+    }
+    if (away.length === 0) {
+      const names = dogs.map((d) => d.name);
+      const list = names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}` : names[0];
+      await this.endWalk(`${list} ${names.length > 1 ? "are" : "is"} back home. Walking mode ended`, dogs[0]);
+    }
+  }
+
+  private async endWalk(message: string, dog: LiveDog) {
+    await this.db.setSnooze(null);
+    this.wasSnoozed = false;                                           // a clean finish: no "still outside" follow-up
+    const saved = await this.db.addEvent({ ts: Math.floor(Date.now() / 1000), type: "walk_ended", dogId: "", dogName: dog.name, alert: false, message });
+    await this.emit(saved);
   }
 
   /** Call when walking mode is switched off by hand; the timer running out is noticed by tick(). */

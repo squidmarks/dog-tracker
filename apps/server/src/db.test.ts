@@ -111,6 +111,16 @@ describe.skipIf(!hasMongo)("trackers and dogs (Mongo)", () => {
     expect(await db.snooze(1000)).toBeNull();
   });
 
+  it("tracks a walk that ends when the dogs are back, and when a dog has left", async () => {
+    await db.setSnooze(5000, { mode: "return", startedAt: 1000 });
+    expect(await db.walk(2000)).toEqual({ until: 5000, mode: "return", startedAt: 1000, armed: false });
+    await db.armWalk();
+    expect((await db.walk(2000))!.armed).toBe(true);
+    expect(await db.walk(6000)).toBeNull();                     // hit its safety cap
+    await db.setSnooze(3000);                                   // a plain timer is the other kind
+    expect(await db.walk(2000)).toMatchObject({ mode: "timer", armed: false });
+  });
+
   it("removes only simulated trackers and their dogs", async () => {
     await pos("!fa000001", 1, 100);
     await pos("!aaaa0001", 2, 100);

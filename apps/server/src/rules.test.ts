@@ -82,6 +82,70 @@ describe.skipIf(!hasMongo)("Monitor (Mongo)", () => {
       expect(events.filter((e) => e.type === "snooze_ended")).toHaveLength(0);
     });
 
+    describe("until they're back", () => {
+      const startWalk = async (startedAt = Math.floor(Date.now() / 1000)) => {
+        await db.setSnooze(startedAt + 6 * 3600, { mode: "return", startedAt });
+        await monitor.onSnoozeChanged();
+      };
+      const fixB = async (id: number, metresNorth: number, ts = 100) => {
+        await db.apply({ kind: "position", node: "!bbbb0002", packetId: id, gateway: "!g", rssi: -80, snr: 5, ts, lat: north(metresNorth), lon: C.lon, alt: null, speed: null, sats: 8 }, ts);
+        await monitor.onPosition("!bbbb0002", north(metresNorth), C.lon);
+      };
+
+      it("arms when a dog leaves, then ends by itself, quietly, when the dog is home again", async () => {
+        await startWalk();
+        await fix(2, 12);                                          // still in the yard: nothing happens yet
+        expect(await db.walk()).toMatchObject({ mode: "return", armed: false });
+        await fix(3, 60); await fix(4, 65);                        // they set off
+        expect(await db.walk()).toMatchObject({ armed: true });
+        expect(events.at(-1)).toMatchObject({ type: "zone_exit", alert: false, snoozed: true });
+        await fix(5, 20); await fix(6, 18);                        // and come home
+        expect(await db.walk()).toBeNull();
+        expect(events.at(-1)).toMatchObject({ type: "walk_ended", alert: false, message: "Ozzie is back home. Walking mode ended" });
+        expect(events.filter((e) => e.type === "snooze_ended")).toHaveLength(0);   // a clean finish: no nagging
+      });
+
+      it("alerts normally again once it has ended", async () => {
+        await startWalk();
+        await fix(3, 60); await fix(4, 65); await fix(5, 20); await fix(6, 18);
+        events.length = 0;
+        await fix(7, 60); await fix(8, 65);                        // next time out of the yard
+        expect(events.at(-1)).toMatchObject({ type: "zone_exit", alert: true });
+      });
+
+      it("waits for every dog, not just the first one home", async () => {
+        await db.createDog({ name: "Maple" });
+        await db.apply({ kind: "position", node: "!bbbb0002", packetId: 1, gateway: "!g", rssi: -80, snr: 5, ts: 100, lat: north(10), lon: C.lon, alt: null, speed: null, sats: 8 }, 100);
+        await db.updateDog((await db.dogs()).find((d) => d.name === "Maple")!.id, { tracker: "!bbbb0002" });
+        await monitor.reload(true);
+        await startWalk();
+        await fix(3, 60); await fix(4, 65);                        // Ozzie leaves
+        await fixB(3, 70); await fixB(4, 75);                      // Maple leaves
+        await fix(5, 20); await fix(6, 18);                        // Ozzie is home; Maple isn't
+        expect(await db.walk()).not.toBeNull();
+        await fixB(5, 20); await fixB(6, 18);                      // now both
+        expect(await db.walk()).toBeNull();
+        expect(events.at(-1)!.message).toBe("Maple and Ozzie are back home. Walking mode ended");
+      });
+
+      it("cancels itself if nobody ever leaves", async () => {
+        const started = Math.floor(Date.now() / 1000) - 25 * 60;   // started 25 minutes ago
+        await startWalk(started);
+        await db.apply({ kind: "telemetry", node: "!aaaa0001", battery: 90, voltage: 4 }, Math.floor(Date.now() / 1000));
+        await monitor.tick(Math.floor(Date.now() / 1000));
+        expect(await db.walk()).toBeNull();
+        expect(events.at(-1)).toMatchObject({ type: "walk_ended", alert: false, message: "Walking mode cancelled: nobody left the yard" });
+      });
+
+      it("still tells you at the end if you stop it by hand while a dog is out", async () => {
+        await startWalk();
+        await fix(3, 60); await fix(4, 65);
+        await db.setSnooze(null);
+        await monitor.onSnoozeChanged();
+        expect(events.at(-1)).toMatchObject({ type: "snooze_ended", alert: true, message: "Walking mode ended: Ozzie is still outside Yard" });
+      });
+    });
+
     it("alerts normally before and after", async () => {
       await fix(2, 60); await fix(3, 65);
       expect(events[0]).toMatchObject({ type: "zone_exit", alert: true });

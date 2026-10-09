@@ -12,7 +12,7 @@ import { distanceM } from "../lib/geo";
 import { formatDistance, type Units } from "../lib/units";
 import {
   ago, ALERT_LABEL, batteryLabel, dogColor, dogEmoji, EVENT_ICON, trackerLabel,
-  minutesLabel, RANGE_LABEL, RECENT_STOPS, type Dog, type DogEvent, type DrawState, type Hub, type RangePreset, type SimState, type TrailView, type Tracker, type Zone,
+  minutesLabel, RANGE_LABEL, RECENT_STOPS, type Dog, type DogEvent, type DrawState, type Hub, type RangePreset, type SimState, type TrailView, type Tracker, type WalkState, type Zone,
 } from "../lib/types";
 
 const STALE_AFTER_S = 15 * 60;
@@ -35,7 +35,7 @@ export default function Page() {
   const [zones, setZones] = useState<Zone[]>([]);
   const [events, setEvents] = useState<DogEvent[]>([]);
   const [hubs, setHubs] = useState<Hub[]>([]);
-  const [snoozeUntil, setSnoozeUntil] = useState<number | null>(null);
+  const [walk, setWalk] = useState<WalkState>({ active: false, until: null, mode: null, armed: false });
   const [zoneDialog, setZoneDialog] = useState<ZoneDialogState | null>(null);
   const [draw, setDraw] = useState<DrawState | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -76,7 +76,7 @@ export default function Page() {
       setDogs(d); setTrackers(t); setZones(z); setEvents(ev); setHubs(h); setLoadError(null);
     } catch (e) { setLoadError((e as Error).message); }
     api.sim().then(setSim).catch(() => setSim(null));
-    api.snooze().then((x) => setSnoozeUntil(x.until)).catch(() => undefined);
+    api.walk().then(setWalk).catch(() => undefined);
   }, []);
 
   // Initial load, live updates via SSE (coalesced to ~1/s), and a slow poll as a safety net.
@@ -102,9 +102,11 @@ export default function Page() {
     return () => { es.close(); clearInterval(poll); clearInterval(tick); if (pending) clearTimeout(pending); };
   }, [load, loadLive]);
 
-  const snoozeMinutesLeft = snoozeUntil && snoozeUntil > now ? Math.ceil((snoozeUntil - now) / 60) : 0;
-  const setSnooze = async (minutes: number | null) => {
-    try { setSnoozeUntil((await api.setSnooze(minutes)).until); load(); } catch (e) { alert((e as Error).message); }
+  // Walking mode ends by itself when the dogs are back home; this is just the switch and its status.
+  const walking = walk.active && (walk.until == null || walk.until > now);
+  const minutesLeft = walk.until ? Math.max(1, Math.ceil((walk.until - now) / 60)) : 0;
+  const changeWalk = async (start: boolean) => {
+    try { setWalk(await (start ? api.startWalk() : api.endWalk())); load(); } catch (e) { alert((e as Error).message); }
   };
 
   const flyTo = (lat: number | null, lon: number | null) => {
@@ -150,19 +152,17 @@ export default function Page() {
         <h1>🐕 Dog Tracker <button className="link gear" aria-label="Alert settings" onClick={() => setSettingsOpen(true)}>⚙ Settings</button></h1>
         {loadError && <p className="error">Can&apos;t reach the server: {loadError}</p>}
 
-        <div className={`snooze ${snoozeMinutesLeft ? "on" : ""}`}
-          title="Exit and not-reporting alerts are logged quietly while this is on. Low battery and hub outages still alert.">
-          {snoozeMinutesLeft ? (
+        <div className={`snooze ${walking ? "on" : ""}`}
+          title="Exit and not-reporting alerts are logged quietly during a walk. It ends by itself when the dogs are back home. Low battery and hub outages still alert.">
+          {walking ? (
             <>
-              <span>🔕 Walking mode · {snoozeMinutesLeft >= 60 ? `${Math.floor(snoozeMinutesLeft / 60)} h ${snoozeMinutesLeft % 60} min` : `${snoozeMinutesLeft} min`} left</span>
-              <button onClick={() => setSnooze(null)}>End</button>
+              <span>🔕 Walking mode · {walk.mode === "timer" ? `${minutesLeft} min left` : walk.armed ? "until the dogs are back" : "waiting for the dogs to leave"}</span>
+              <button onClick={() => changeWalk(false)}>{walk.armed || walk.mode === "timer" ? "End" : "Cancel"}</button>
             </>
           ) : (
             <>
               <span>Walking the dogs?</span>
-              <span className="snoozebtns">
-                {[30, 60, 120].map((m) => <button key={m} onClick={() => setSnooze(m)}>{m < 60 ? `${m} min` : `${m / 60} h`}</button>)}
-              </span>
+              <button className="startwalk" onClick={() => changeWalk(true)}>Start walk</button>
             </>
           )}
         </div>

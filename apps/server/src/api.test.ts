@@ -89,16 +89,26 @@ describe.skipIf(!hasMongo)("dogs API (Mongo)", () => {
   });
 
   it("starts, reports and ends walking mode, and rejects silly durations", async () => {
-    expect((await call("GET", "/api/snooze")).body).toEqual({ active: false, until: null });
+    expect((await call("GET", "/api/snooze")).body).toEqual({ active: false, until: null, mode: null, armed: false });
     const on = (await call("PUT", "/api/snooze", { minutes: 60 })).body;
     expect(on.active).toBe(true);
     expect(on.until - Math.floor(Date.now() / 1000)).toBeGreaterThan(3590);
     expect(on.until - Math.floor(Date.now() / 1000)).toBeLessThanOrEqual(3600);
     expect(hooks.onSnoozeChanged).toHaveBeenCalled();
     expect((await call("GET", "/api/snooze")).body.active).toBe(true);
-    expect((await call("PUT", "/api/snooze", { minutes: null })).body).toEqual({ active: false, until: null });
+    expect((await call("PUT", "/api/snooze", { minutes: null })).body).toEqual({ active: false, until: null, mode: null, armed: false });
     expect((await call("PUT", "/api/snooze", { minutes: 0 })).body.active).toBe(false);
     for (const bad of [-5, 100000, "30"]) expect((await call("PUT", "/api/snooze", { minutes: bad })).status).toBe(400);
+  });
+
+  it("starts an until-they're-back walk with a six-hour safety cap", async () => {
+    const r = (await call("PUT", "/api/snooze", { untilBack: true })).body;
+    expect(r).toMatchObject({ active: true, mode: "return", armed: false });
+    const hours = (r.until - Math.floor(Date.now() / 1000)) / 3600;
+    expect(hours).toBeGreaterThan(5.99);
+    expect(hours).toBeLessThanOrEqual(6);
+    expect((await call("GET", "/api/snooze")).body).toMatchObject({ active: true, mode: "return" });
+    expect((await call("PUT", "/api/snooze", { minutes: null })).body).toMatchObject({ active: false, mode: null });
   });
 
   it("places a hub on the map and validates the request", async () => {

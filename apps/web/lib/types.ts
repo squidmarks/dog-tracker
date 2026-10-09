@@ -23,7 +23,7 @@ export type AlertOn = "exit" | "enter" | "both" | "none";
 export interface Zone {
   id: string; name: string; color: string; ring: [number, number][]; alertOn: AlertOn; home: boolean; dogs: string[] | null;
 }
-export type EventType = "zone_exit" | "zone_enter" | "silent" | "reporting" | "low_battery" | "battery_ok" | "hub_offline" | "hub_online" | "snooze_ended";
+export type EventType = "zone_exit" | "zone_enter" | "silent" | "reporting" | "low_battery" | "battery_ok" | "hub_offline" | "hub_online" | "snooze_ended" | "walk_ended";
 export interface DogEvent {
   id: string; ts: number; type: EventType; dogId: string; dogName: string; zoneId?: string; zoneName?: string;
   lat?: number | null; lon?: number | null; alert: boolean; message: string; sim?: boolean;
@@ -40,6 +40,7 @@ export interface Hub {
   /** A collar relayed through a phone (comes and goes with the walk): shown, but never alerts. */
   mobile?: boolean;
 }
+export interface WalkState { active: boolean; until: number | null; mode: "timer" | "return" | null; armed: boolean }
 export interface SignalPoint { ts: number; lat: number; lon: number; snr: number | null; rssi: number | null }
 export interface CoverageGap { from: { ts: number; lat: number; lon: number }; to: { ts: number; lat: number; lon: number }; seconds: number }
 export interface Signal { points: SignalPoint[]; gaps: CoverageGap[] }
@@ -52,7 +53,7 @@ export interface DrawState { mode: "polygon" | "circle"; points: [number, number
 
 export const EVENT_ICON: Record<EventType, string> = {
   zone_exit: "🚪", zone_enter: "📍", silent: "📡", reporting: "✅", low_battery: "🪫", battery_ok: "🔋",
-  hub_offline: "🔌", hub_online: "🛰️", snooze_ended: "⏰",
+  hub_offline: "🔌", hub_online: "🛰️", snooze_ended: "⏰", walk_ended: "🏠",
 };
 export const ALERT_LABEL: Record<AlertOn, string> = {
   exit: "Alert when a dog leaves", enter: "Alert when a dog enters", both: "Alert on both", none: "Log only, no alerts",

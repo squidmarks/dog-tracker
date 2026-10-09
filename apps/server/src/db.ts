@@ -48,7 +48,7 @@ export interface Zone {
 }
 export interface ZoneInput { name?: string; color?: string; ring?: [number, number][]; alertOn?: AlertOn; home?: boolean; dogs?: string[] | null }
 
-export type EventType = "zone_exit" | "zone_enter" | "silent" | "reporting" | "low_battery" | "battery_ok" | "hub_offline" | "hub_online" | "snooze_ended";
+export type EventType = "zone_exit" | "zone_enter" | "silent" | "reporting" | "low_battery" | "battery_ok" | "hub_offline" | "hub_online" | "snooze_ended" | "walk_ended";
 export interface DogEvent {
   id: string; ts: number; type: EventType;
   /** Empty for hub events; `dogName` then carries the hub's name. */
@@ -360,16 +360,28 @@ export async function openDb(url: string, dbName: string) {
     },
 
     // --- walking mode: a household-wide snooze of the exit/silence alerts ----------------------------------
-    /** The epoch second the snooze ends, or null when alerts aren't snoozed (or it has already run out). */
-    async snooze(at = now()): Promise<number | null> {
-      const doc = await (db.collection("settings") as Collection<{ _id: string; until?: number }>).findOne({ _id: "snooze" });
-      return doc?.until && doc.until > at ? doc.until : null;
+    /**
+     * The current walking mode, or null. `mode: "timer"` runs until `until`; `mode: "return"` ends by itself when the dogs
+     * are back home (with `until` as the safety cap). `armed` flips on once a dog has actually left.
+     */
+    async walk(at = now()): Promise<{ until: number; mode: "timer" | "return"; startedAt: number; armed: boolean } | null> {
+      const doc = await (db.collection("settings") as Collection<{ _id: string; until?: number; mode?: "timer" | "return"; startedAt?: number; armed?: boolean }>).findOne({ _id: "snooze" });
+      if (!doc?.until || doc.until <= at) return null;
+      return { until: doc.until, mode: doc.mode ?? "timer", startedAt: doc.startedAt ?? 0, armed: !!doc.armed };
     },
-    /** Snooze until `untilTs`, or cancel with null. */
-    async setSnooze(untilTs: number | null): Promise<void> {
-      const col = db.collection("settings") as Collection<{ _id: string; until?: number }>;
+    /** The epoch second walking mode ends (or hits its cap), or null when alerts aren't snoozed. */
+    async snooze(at = now()): Promise<number | null> {
+      return (await api.walk(at))?.until ?? null;
+    },
+    /** Start walking mode until `untilTs`, or cancel with null. */
+    async setSnooze(untilTs: number | null, opts: { mode?: "timer" | "return"; startedAt?: number } = {}): Promise<void> {
+      const col = db.collection("settings") as Collection<{ _id: string; until?: number; mode?: string; startedAt?: number; armed?: boolean }>;
       if (untilTs == null) await col.deleteOne({ _id: "snooze" });
-      else await col.updateOne({ _id: "snooze" }, { $set: { until: untilTs } }, { upsert: true });
+      else await col.updateOne({ _id: "snooze" }, { $set: { until: untilTs, mode: opts.mode ?? "timer", startedAt: opts.startedAt ?? now(), armed: false } }, { upsert: true });
+    },
+    /** A dog has left: from now on, "everyone's back" can end the walk. */
+    async armWalk(): Promise<void> {
+      await (db.collection("settings") as Collection<{ _id: string; armed?: boolean }>).updateOne({ _id: "snooze" }, { $set: { armed: true } });
     },
 
     // --- hubs (LoRa gateways) --------------------------------------------
