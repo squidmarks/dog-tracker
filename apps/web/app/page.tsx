@@ -127,7 +127,6 @@ export default function Page() {
   }, [draw]);
 
   const inbox = trackers.filter((t) => t.dog_id == null && t.has_position);
-  const others = trackers.filter((t) => t.dog_id == null && !t.has_position);
 
   const assign = async (t: Tracker, dogId: string) => {
     if (!dogId) return;
@@ -253,17 +252,7 @@ export default function Page() {
           </section>
         )}
 
-        {dogs.length > 0 && <p className="hint">Distance ignores GPS wobble and gaps in reporting, so it&apos;s a slight underestimate. Top speed can only be as fast as the reports that caught it.</p>}
 
-        {others.length > 0 && (
-          <details className="others">
-            <summary>Other devices ({others.length})</summary>
-            {others.map((t) => (
-              <div key={t.id} className="meta">{trackerLabel(t)} · {t.id} · heard {ago(t.last_heard, now)}</div>
-            ))}
-            <p className="meta">Seen on the channel but with no GPS position (base stations, for example).</p>
-          </details>
-        )}
 
         {sim?.enabled && (
           <section className="simpanel">
