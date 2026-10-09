@@ -128,3 +128,7 @@ button.topspeed { display: block; margin: 6px 0 0; text-align: left; font-size: 
 .pin.flag { background: #fff; font-size: 18px; }
 .rangectl > .seg { display: flex; }
 .rangectl > .seg button { flex: 1; }
+
+.dogstats { margin-top: 8px; padding-top: 8px; border-top: 1px solid color-mix(in srgb, var(--muted) 30%, transparent); }
+.dogstats .statline { margin-top: 0; }
+h2 .seg.small { margin-right: 4px; }

@@ -4,7 +4,7 @@ import { DogDialog, type DogDialogState } from "../components/DogDialog";
 import { BatterySpark } from "../components/BatterySpark";
 import { MapView, type BaseLayer, type Flag, type Focus } from "../components/MapView";
 import { SettingsDialog } from "../components/SettingsDialog";
-import { StatsPanel } from "../components/StatsPanel";
+import { DogStats, STATS_PERIODS, usePeriodStats, type StatsPeriod } from "../components/DogStats";
 import { ZoneDialog, type ZoneDialogState } from "../components/ZoneDialog";
 import { api } from "../lib/api";
 import { distanceM } from "../lib/geo";
@@ -41,6 +41,8 @@ export default function Page() {
   const [view, setView] = useState<TrailView>({ mode: "recent", minutes: 30 });
   const [flag, setFlag] = useState<Flag | null>(null);
   const [units, setUnits] = useState<Units>("imperial");
+  const [period, setPeriod] = useState<StatsPeriod>("today");
+  const { rows: statRows, fastest } = usePeriodStats(period);
   const [toasts, setToasts] = useState<{ id: string; text: string }[]>([]);
   const [focus, setFocus] = useState<Focus | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -164,6 +166,12 @@ export default function Page() {
 
         <section>
           <h2>Dogs <span className="count">{dogs.length}</span>
+            <span className="grow" />
+            <span className="seg small" role="group" aria-label="Activity period">
+              {(Object.keys(STATS_PERIODS) as StatsPeriod[]).map((p) => (
+                <button key={p} className={period === p ? "on" : ""} onClick={() => setPeriod(p)}>{STATS_PERIODS[p]}</button>
+              ))}
+            </span>
             <button className="link" onClick={() => setDialog({})}>+ Add</button></h2>
           {dogs.length === 0 && (
             <p className="meta">{inbox.length ? "Create a dog for a new tracker above." : "No dogs yet. Switch on a tracker, or add a dog and link it later."}</p>
@@ -174,7 +182,7 @@ export default function Page() {
               <div key={d.id} className="card dog" onClick={() => flyTo(d.lat, d.lon)}>
                 <b>
                   <span className="dot" style={{ background: dogColor(d) }}>{dogEmoji(d)}</span>
-                  {d.name}{!d.alerts && <span title="Alerts off">🔕</span>}{d.sim && <span className="badge">sim</span>}
+                  {d.name}{fastest === d.id && <span title="Fastest in this period">🏆</span>}{!d.alerts && <span title="Alerts off">🔕</span>}{d.sim && <span className="badge">sim</span>}
                   <button className="link edit" aria-label={`Edit ${d.name}`}
                     onClick={(e) => { e.stopPropagation(); setDialog({ dog: d }); }}>Edit</button>
                 </b>
@@ -190,17 +198,14 @@ export default function Page() {
                       {d.temperature != null && `🌡 ${Math.round(d.temperature)}°C · `}heard {ago(d.last_heard, now)}
                     </div>
                     <BatterySpark dogId={d.id} />
+                    <DogStats row={statRows.get(d.id)} period={period} units={units}
+                      onTopSpeed={(row, label) => { const t = row.stats.topSpeed; if (t) setFlag({ lat: t.lat, lon: t.lon, label, n: Date.now() }); }} />
                   </>
                 ) : <div className="meta stale">No tracker linked</div>}
               </div>
             );
           })}
         </section>
-
-        <StatsPanel units={units} onTopSpeed={(row, label) => {
-          const top = row.stats.topSpeed;
-          if (top) setFlag({ lat: top.lat, lon: top.lon, label, n: Date.now() });
-        }} />
 
         <section>
           <h2>Zones <span className="count">{zones.length}</span>
@@ -245,6 +250,8 @@ export default function Page() {
             ))}
           </section>
         )}
+
+        {dogs.length > 0 && <p className="hint">Distance ignores GPS wobble and gaps in reporting, so it&apos;s a slight underestimate. Top speed can only be as fast as the reports that caught it.</p>}
 
         {others.length > 0 && (
           <details className="others">
