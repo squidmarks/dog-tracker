@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { currentSubscription, disablePush, enablePush, pushSupport, type PushSupport } from "../lib/push";
 import type { Notifications, Settings } from "../lib/types";
+import type { Units } from "../lib/units";
 
 const SUPPORT_NOTE: Record<Exclude<PushSupport, "ok">, string> = {
   "needs-install": "On iPhone, add this site to your Home Screen first (Share, then Add to Home Screen), then open it from there and come back here.",
@@ -10,7 +11,7 @@ const SUPPORT_NOTE: Record<Exclude<PushSupport, "ok">, string> = {
   denied: "Notifications are blocked for this site. Allow them in the browser or iOS Settings, then try again.",
 };
 
-export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function SettingsDialog({ open, onClose, units, onUnits }: { open: boolean; onClose: () => void; units: Units; onUnits: (u: Units) => void }) {
   const ref = useRef<HTMLDialogElement>(null);
   const [form, setForm] = useState<Settings>({ staleMinutes: 20, lowBatteryPct: 20, fenceMarginM: 5, hubSilentMinutes: 45, pushoverEnabled: true });
   const [notes, setNotes] = useState<Notifications | null>(null);
@@ -57,6 +58,15 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
     <dialog ref={ref} className="dialog wide" onClose={onClose} onCancel={onClose}>
       <form onSubmit={save}>
         <h2>Settings</h2>
+
+        <h3>Display</h3>
+        <label>Units
+          <select value={units} onChange={(e) => onUnits(e.target.value as Units)}>
+            <option value="imperial">Miles and mph</option>
+            <option value="metric">Kilometres and km/h</option>
+          </select>
+        </label>
+        <p className="hint">Remembered on this device.</p>
 
         <h3>Alert thresholds</h3>
         <label>Dog not reporting after (minutes){num("staleMinutes")}</label>

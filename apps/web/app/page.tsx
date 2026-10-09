@@ -1,14 +1,17 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { DogDialog, type DogDialogState } from "../components/DogDialog";
-import { MapView, type BaseLayer, type Focus } from "../components/MapView";
+import { BatterySpark } from "../components/BatterySpark";
+import { MapView, type BaseLayer, type Flag, type Focus } from "../components/MapView";
 import { SettingsDialog } from "../components/SettingsDialog";
+import { StatsPanel } from "../components/StatsPanel";
 import { ZoneDialog, type ZoneDialogState } from "../components/ZoneDialog";
 import { api } from "../lib/api";
 import { distanceM } from "../lib/geo";
+import type { Units } from "../lib/units";
 import {
   ago, ALERT_LABEL, batteryLabel, dogColor, dogEmoji, EVENT_ICON, trackerLabel,
-  RANGE_LABEL, type Dog, type DogEvent, type DrawState, type Hub, type RangePreset, type SimState, type Tracker, type TrackRange, type Zone,
+  minutesLabel, RANGE_LABEL, RECENT_STOPS, type Dog, type DogEvent, type DrawState, type Hub, type RangePreset, type SimState, type TrailView, type Tracker, type Zone,
 } from "../lib/types";
 
 const STALE_AFTER_S = 15 * 60;
@@ -35,15 +38,31 @@ export default function Page() {
   const [draw, setDraw] = useState<DrawState | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [base, setBase] = useState<BaseLayer>("map");
-  const [range, setRange] = useState<TrackRange>({ preset: "today" });
+  const [view, setView] = useState<TrailView>({ mode: "recent", minutes: 30 });
+  const [flag, setFlag] = useState<Flag | null>(null);
+  const [units, setUnits] = useState<Units>("imperial");
   const [toasts, setToasts] = useState<{ id: string; text: string }[]>([]);
   const [focus, setFocus] = useState<Focus | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const focusN = useRef(0);
 
   // Remember the map style per browser (it's only a convenience, so storage may be unavailable).
-  useEffect(() => { try { if (localStorage.getItem("dt-base") === "satellite") setBase("satellite"); } catch { /* ignore */ } }, []);
+  useEffect(() => {
+    try {
+      if (localStorage.getItem("dt-base") === "satellite") setBase("satellite");
+      if (localStorage.getItem("dt-units") === "metric") setUnits("metric");
+    } catch { /* ignore */ }
+  }, []);
+  const chooseUnits = (u: Units) => { setUnits(u); try { localStorage.setItem("dt-units", u); } catch { /* ignore */ } };
   const chooseBase = (b: BaseLayer) => { setBase(b); try { localStorage.setItem("dt-base", b); } catch { /* ignore */ } };
+
+  /** Positions arrive every few seconds; they only change dogs and trackers, so don't refetch the rest each time. */
+  const loadLive = useCallback(async () => {
+    try {
+      const [d, t] = await Promise.all([api.dogs(), api.trackers()]);
+      setDogs(d); setTrackers(t); setLoadError(null);
+    } catch (e) { setLoadError((e as Error).message); }
+  }, []);
 
   const load = useCallback(async () => {
     try {
@@ -57,22 +76,24 @@ export default function Page() {
   useEffect(() => {
     load();
     let pending: ReturnType<typeof setTimeout> | null = null;
+    let needFull = false;
     const es = new EventSource("/api/stream");
     es.onmessage = (m) => {
       try {
         const msg = JSON.parse(m.data);
+        if (!["position", "telemetry", "nodeinfo"].includes(msg.kind)) needFull = true;   // dogs/zones/hubs/event changed
         if (msg.kind === "event" && msg.event?.alert) {
           const id = msg.event.id as string;
           setToasts((t) => [...t, { id, text: msg.event.message }]);
           setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 10_000);
         }
       } catch { /* ignore keep-alives */ }
-      if (!pending) pending = setTimeout(() => { pending = null; load(); }, 1000);
+      if (!pending) pending = setTimeout(() => { pending = null; const full = needFull; needFull = false; (full ? load : loadLive)(); }, 1000);
     };
     const poll = setInterval(load, 10_000);
     const tick = setInterval(() => setNow(Date.now() / 1000), 15_000);
     return () => { es.close(); clearInterval(poll); clearInterval(tick); if (pending) clearTimeout(pending); };
-  }, [load]);
+  }, [load, loadLive]);
 
   const flyTo = (lat: number | null, lon: number | null) => {
     if (lat != null && lon != null) setFocus({ lat, lon, n: ++focusN.current });
@@ -165,14 +186,21 @@ export default function Page() {
                       {d.battery != null && ` · 🔋 ${batteryLabel(d.battery)}`}
                     </div>
                     <div className="meta">
-                      {d.sats != null && `${d.sats} sats · `}{d.rssi != null && `RSSI ${Math.round(d.rssi)} · `}heard {ago(d.last_heard, now)}
+                      {d.sats != null && `${d.sats} sats · `}{d.rssi != null && `RSSI ${Math.round(d.rssi)} · `}
+                      {d.temperature != null && `🌡 ${Math.round(d.temperature)}°C · `}heard {ago(d.last_heard, now)}
                     </div>
+                    <BatterySpark dogId={d.id} />
                   </>
                 ) : <div className="meta stale">No tracker linked</div>}
               </div>
             );
           })}
         </section>
+
+        <StatsPanel units={units} onTopSpeed={(row, label) => {
+          const top = row.stats.topSpeed;
+          if (top) setFlag({ lat: top.lat, lon: top.lon, label, n: Date.now() });
+        }} />
 
         <section>
           <h2>Zones <span className="count">{zones.length}</span>
@@ -191,7 +219,7 @@ export default function Page() {
         </section>
 
         <section>
-          <h2>Activity</h2>
+          <h2>Recent events</h2>
           {events.length === 0 && <p className="meta">Nothing yet. Alerts and notable changes show up here.</p>}
           {events.map((e) => (
             <div key={e.id} className={`event ${e.alert ? "alert" : ""}`}
@@ -249,7 +277,7 @@ export default function Page() {
       </aside>
 
       <div className="mapwrap">
-        <MapView dogs={dogs} trackers={trackers} zones={zones} draw={draw} focus={focus} base={base} range={range}
+        <MapView dogs={dogs} trackers={trackers} zones={zones} draw={draw} focus={focus} flag={flag} base={base} view={view}
           onDrawClick={onDrawClick} onZoneClick={(id) => { const z = zones.find((x) => x.id === id); if (z) setZoneDialog({ zone: z }); }} />
         <div className="mapctl">
           <div className="basectl" role="group" aria-label="Map style">
@@ -257,25 +285,47 @@ export default function Page() {
             <button className={base === "satellite" ? "on" : ""} onClick={() => chooseBase("satellite")}>Satellite</button>
           </div>
           <div className="rangectl">
-            <label>Trails
-              <select value={range.preset} onChange={(e) => {
-                const preset = e.target.value as RangePreset;
-                const start = new Date(); start.setHours(0, 0, 0, 0);
-                setRange(preset === "custom" ? { preset, customFrom: start.getTime() / 1000, customTo: undefined } : { preset });
-              }}>
-                {(Object.keys(RANGE_LABEL) as RangePreset[]).map((k) => <option key={k} value={k}>{RANGE_LABEL[k]}</option>)}
-              </select>
-            </label>
-            {range.preset === "custom" && (
-              <div className="custom">
-                <label>From<input type="datetime-local" value={toLocalInput(range.customFrom)}
-                  onChange={(e) => setRange({ ...range, customFrom: fromLocalInput(e.target.value) })} /></label>
-                <label>To<input type="datetime-local" value={toLocalInput(range.customTo)}
-                  onChange={(e) => setRange({ ...range, customTo: fromLocalInput(e.target.value) })} /></label>
-                <button onClick={() => setRange({ ...range, customTo: undefined })} disabled={range.customTo == null}>To now</button>
-              </div>
+            <div className="seg" role="group" aria-label="Trail mode">
+              <button className={view.mode === "recent" ? "on" : ""} onClick={() => setView({ mode: "recent", minutes: 30 })}>Recent</button>
+              <button className={view.mode === "history" ? "on" : ""} onClick={() => setView({ mode: "history", range: { preset: "today" }, style: "heat" })}>History</button>
+            </div>
+            {view.mode === "recent" ? (
+              <>
+                <label className="slider">Trail length
+                  <input type="range" min={0} max={RECENT_STOPS.length - 1} step={1}
+                    value={Math.max(0, RECENT_STOPS.indexOf(view.minutes))}
+                    onChange={(e) => setView({ mode: "recent", minutes: RECENT_STOPS[Number(e.target.value)] })} />
+                  <b>{minutesLabel(view.minutes)}</b>
+                </label>
+                <div className="legend" aria-hidden><span>now</span><i className="fade" /><span>{minutesLabel(view.minutes)} ago</span></div>
+              </>
+            ) : (
+              <>
+                <div className="row2">
+                  <select aria-label="History range" value={view.range.preset} onChange={(e) => {
+                    const preset = e.target.value as RangePreset;
+                    const start = new Date(); start.setHours(0, 0, 0, 0);
+                    setView({ ...view, range: preset === "custom" ? { preset, customFrom: start.getTime() / 1000, customTo: undefined } : { preset } });
+                  }}>
+                    {(Object.keys(RANGE_LABEL) as RangePreset[]).map((k) => <option key={k} value={k}>{RANGE_LABEL[k]}</option>)}
+                  </select>
+                  <span className="seg small" role="group" aria-label="History style">
+                    <button className={view.style === "heat" ? "on" : ""} onClick={() => setView({ ...view, style: "heat" })}>Heat map</button>
+                    <button className={view.style === "trails" ? "on" : ""} onClick={() => setView({ ...view, style: "trails" })}>Trails</button>
+                  </span>
+                </div>
+                {view.range.preset === "custom" && (
+                  <div className="custom">
+                    <label>From<input type="datetime-local" value={toLocalInput(view.range.customFrom)}
+                      onChange={(e) => setView({ ...view, range: { ...view.range, customFrom: fromLocalInput(e.target.value) } })} /></label>
+                    <label>To<input type="datetime-local" value={toLocalInput(view.range.customTo)}
+                      onChange={(e) => setView({ ...view, range: { ...view.range, customTo: fromLocalInput(e.target.value) } })} /></label>
+                    <button onClick={() => setView({ ...view, range: { ...view.range, customTo: undefined } })} disabled={view.range.customTo == null}>To now</button>
+                  </div>
+                )}
+                <div className="legend" aria-hidden><span>{view.style === "heat" ? "less time" : "older"}</span><i className={view.style === "heat" ? "heat" : ""} /><span>{view.style === "heat" ? "more time" : "newer"}</span></div>
+              </>
             )}
-            <div className="legend" aria-hidden><span>older</span><i /><span>newer</span></div>
           </div>
         </div>
         {hubs.some((h) => h.status === "offline") && (
@@ -301,7 +351,7 @@ export default function Page() {
       <DogDialog state={dialog} trackers={trackers} onClose={() => setDialog(null)} onSaved={load} />
       <ZoneDialog state={zoneDialog} dogs={dogs} onClose={() => setZoneDialog(null)} onSaved={load}
         onRedraw={(z) => startDraw("polygon", z)} />
-      <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} units={units} onUnits={chooseUnits} />
     </div>
   );
 }

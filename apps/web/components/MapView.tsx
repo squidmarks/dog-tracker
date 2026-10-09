@@ -4,14 +4,23 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { circleRing, distanceM } from "../lib/geo";
 import { trackSegments } from "../lib/track";
-import { ago, dogColor, dogEmoji, rangeKey, resolveRange, trackerLabel, type DrawState, type Dog, type Tracker, type TrackRange, type Zone } from "../lib/types";
+import { ago, dogColor, dogEmoji, resolveView, trackerLabel, viewKey, type DrawState, type Dog, type Tracker, type TrailView, type Zone } from "../lib/types";
 
 // MapLibre's web worker can't be bundled by Next; it is copied to /public by the copy-worker script.
 maplibregl.setWorkerUrl("/maplibre-gl-worker.mjs");
 
-const TRACK_REFRESH_S = 10;
-
 export interface Focus { lat: number; lon: number; n: number }
+/** A temporary flag on the map, e.g. "Maple's top speed was here". `n` changes to re-show the same place. */
+export interface Flag { lat: number; lon: number; label: string; n: number }
+
+const hexToRgba = (hex: string, a: number) => {
+  const n = parseInt(hex.replace("#", ""), 16);
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;
+};
+// Recent trails fade all the way out at the far end; day-long trails keep a faint floor so the whole day stays visible.
+// Steeper than linear: the half-way point of the window is already faint, so an hour of running around stays readable.
+const FADE_TO_ZERO = ["interpolate", ["linear"], ["get", "a"], 0, 0.95, 0.3, 0.5, 0.6, 0.18, 0.85, 0.05, 1, 0] as maplibregl.ExpressionSpecification;
+const FADE_TO_FLOOR = ["interpolate", ["linear"], ["get", "a"], 0, 0.9, 1, 0.15] as maplibregl.ExpressionSpecification;
 
 const EMPTY = { type: "FeatureCollection" as const, features: [] };
 
@@ -42,8 +51,25 @@ const zonesGeoJSON = (zones: Zone[]) => ({
 
 export type BaseLayer = "map" | "satellite";
 
-export function MapView({ dogs, trackers, zones, draw, focus, base, range, onDrawClick, onZoneClick }: {
-  dogs: Dog[]; trackers: Tracker[]; zones: Zone[]; draw: DrawState | null; focus: Focus | null; base: BaseLayer; range: TrackRange;
+/** Each dog has a heat-map layer (underneath) and a trail layer; only one of them has data at a time. */
+function ensureLayers(m: maplibregl.Map, d: Dog) {
+  if (!m.getSource(`h-${d.id}`)) {
+    m.addSource(`h-${d.id}`, { type: "geojson", data: EMPTY });
+    m.addLayer({ id: `h-${d.id}`, type: "heatmap", source: `h-${d.id}`, paint: {
+      "heatmap-intensity": 1, "heatmap-opacity": 0.9,
+      "heatmap-radius": ["interpolate", ["linear"], ["zoom"], 12, 4, 15, 12, 17, 22, 19, 40],
+    } });
+  }
+  if (!m.getSource(`t-${d.id}`)) {
+    m.addSource(`t-${d.id}`, { type: "geojson", data: EMPTY });
+    m.addLayer({ id: `t-${d.id}`, type: "line", source: `t-${d.id}`,
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: { "line-color": dogColor(d), "line-width": 3.5, "line-opacity": FADE_TO_ZERO } });
+  }
+}
+
+export function MapView({ dogs, trackers, zones, draw, focus, flag, base, view, onDrawClick, onZoneClick }: {
+  dogs: Dog[]; trackers: Tracker[]; zones: Zone[]; draw: DrawState | null; focus: Focus | null; flag: Flag | null; base: BaseLayer; view: TrailView;
   onDrawClick: (lat: number, lon: number) => void; onZoneClick: (id: string) => void;
 }) {
   const live = useRef({ draw, zones, base, onDrawClick, onZoneClick });
@@ -53,9 +79,10 @@ export function MapView({ dogs, trackers, zones, draw, focus, base, range, onDra
   const dogMarkers = useRef(new Map<string, maplibregl.Marker>());
   const trackerMarkers = useRef(new Map<string, maplibregl.Marker>());
   const lastTrack = useRef(new Map<string, { at: number; key: string }>());
-  const rangeRef = useRef(range);
-  rangeRef.current = range;
-  const rKey = rangeKey(range);
+  const viewRef = useRef(view);
+  viewRef.current = view;
+  const vKey = viewKey(view);
+  const flagMarker = useRef<maplibregl.Marker | null>(null);
   const fitted = useRef(false);
   const dogsRef = useRef(dogs);
   dogsRef.current = dogs; // the async draw loop below must always see the latest dogs, not the ones from when it started
@@ -83,6 +110,8 @@ export function MapView({ dogs, trackers, zones, draw, focus, base, range, onDra
     });
     m.addControl(new maplibregl.NavigationControl());
     map.current = m;
+    // Handy for poking at layers from the browser console while developing; never exposed in production builds.
+    if (process.env.NODE_ENV !== "production") (window as unknown as { __map?: maplibregl.Map }).__map = m;
     m.on("load", () => {
       setReady(true);
       m.addSource("zones", { type: "geojson", data: zonesGeoJSON(live.current.zones) });
@@ -146,8 +175,11 @@ export function MapView({ dogs, trackers, zones, draw, focus, base, range, onDra
       for (const [id, mk] of dogMarkers.current) {
         if (live.has(id)) continue;
         mk.remove(); dogMarkers.current.delete(id);
-        if (m.getLayer(`t-${id}`)) m.removeLayer(`t-${id}`);
-        if (m.getSource(`t-${id}`)) m.removeSource(`t-${id}`);
+        for (const prefix of ["t", "h"]) {
+          if (m.getLayer(`${prefix}-${id}`)) m.removeLayer(`${prefix}-${id}`);
+          if (m.getSource(`${prefix}-${id}`)) m.removeSource(`${prefix}-${id}`);
+        }
+        lastTrack.current.delete(id);
       }
       const bounds = new maplibregl.LngLatBounds();
       for (const d of dogs) {
@@ -157,30 +189,46 @@ export function MapView({ dogs, trackers, zones, draw, focus, base, range, onDra
         if (!mk) {
           const node = document.createElement("div");
           node.className = "pin";
+          node.innerHTML = '<span class="emo"></span><div class="arrowwrap"><i></i></div>';
           mk = new maplibregl.Marker({ element: node }).setLngLat([d.lon, d.lat]).addTo(m);
           dogMarkers.current.set(d.id, mk);
         }
         const node = mk.getElement();
-        node.textContent = dogEmoji(d);
+        (node.querySelector(".emo") as HTMLElement).textContent = dogEmoji(d);
         node.style.background = dogColor(d);
+        // A small arrow on the rim shows the direction of travel, only while the dog is actually moving.
+        const wrap = node.querySelector(".arrowwrap") as HTMLElement;
+        const moving = d.heading != null && (d.speed ?? 0) >= 1 && Date.now() / 1000 - (d.pos_ts ?? 0) < 120;
+        wrap.style.display = moving ? "block" : "none";
+        if (moving) wrap.style.transform = `rotate(${d.heading}deg)`;
+        (wrap.firstElementChild as HTMLElement).style.borderBottomColor = dogColor(d);
         mk.setLngLat([d.lon, d.lat]).setPopup(new maplibregl.Popup({ offset: 18 }).setText(`${d.name} · ${ago(d.pos_ts)}`));
 
         // Rolling windows refresh every few seconds; fixed ones (yesterday, custom) are fetched once.
-        const { from, to, rolling } = resolveRange(rangeRef.current);
-        const key = rangeKey(rangeRef.current);
+        const v = resolveView(viewRef.current);
+        const key = viewKey(viewRef.current);
         const seen = lastTrack.current.get(d.id);
-        if (seen && seen.key === key && (!rolling || Date.now() / 1000 - seen.at < TRACK_REFRESH_S)) continue;
+        if (seen && seen.key === key && (!v.rolling || Date.now() / 1000 - seen.at < v.refreshS)) continue;
         lastTrack.current.set(d.id, { at: Date.now() / 1000, key });
-        const track = await api.track(d.id, from, to).catch(() => []);
-        const data = trackSegments(track, from, to);
-        const src = m.getSource(`t-${d.id}`) as maplibregl.GeoJSONSource | undefined;
-        if (src) src.setData(data);
-        else {
-          m.addSource(`t-${d.id}`, { type: "geojson", data });
-          m.addLayer({ id: `t-${d.id}`, type: "line", source: `t-${d.id}`,
-            layout: { "line-cap": "round", "line-join": "round" },
-            paint: { "line-color": dogColor(d), "line-width": 3.5,
-              "line-opacity": ["interpolate", ["linear"], ["get", "a"], 0, 0.95, 1, 0.12] } });
+        ensureLayers(m, d);
+        const trail = m.getSource(`t-${d.id}`) as maplibregl.GeoJSONSource;
+        const heat = m.getSource(`h-${d.id}`) as maplibregl.GeoJSONSource;
+        if (v.kind === "trails") {
+          const track = await api.track(d.id, v.from, v.to).catch(() => []);
+          m.setPaintProperty(`t-${d.id}`, "line-opacity", v.fadeToZero ? FADE_TO_ZERO : FADE_TO_FLOOR);
+          m.setPaintProperty(`t-${d.id}`, "line-color", dogColor(d));
+          trail.setData(trackSegments(track, v.from, v.to));
+          heat.setData(EMPTY);
+        } else {
+          const cells = await api.heat(d.id, v.from, v.to).catch(() => []);
+          const maxW = Math.max(1, ...cells.map((c) => c.w));
+          const c = dogColor(d);
+          m.setPaintProperty(`h-${d.id}`, "heatmap-weight", ["interpolate", ["linear"], ["get", "w"], 0, 0, maxW, 1]);
+          m.setPaintProperty(`h-${d.id}`, "heatmap-color", ["interpolate", ["linear"], ["heatmap-density"],
+            0, hexToRgba(c, 0), 0.15, hexToRgba(c, 0.25), 0.45, hexToRgba(c, 0.55), 0.75, hexToRgba(c, 0.8), 1, hexToRgba(c, 0.95)]);
+          heat.setData({ type: "FeatureCollection", features: cells.map((cell) => ({
+            type: "Feature", properties: { w: cell.w }, geometry: { type: "Point", coordinates: [cell.lon, cell.lat] } })) });
+          trail.setData(EMPTY);
         }
       }
       if (!fitted.current && !bounds.isEmpty()) {
@@ -197,7 +245,23 @@ export function MapView({ dogs, trackers, zones, draw, focus, base, range, onDra
       try { do { st.again = false; await draw(); } while (st.again); } finally { st.running = false; }
     };
     void run();
-  }, [dogs, ready, rKey]);
+  }, [dogs, ready, vKey]);
+
+  // A temporary flag, e.g. where a dog hit its top speed.
+  useEffect(() => {
+    const m = map.current;
+    flagMarker.current?.remove(); flagMarker.current = null;
+    if (!m || !flag) return;
+    const node = document.createElement("div");
+    node.className = "pin flag";
+    node.textContent = "🏁";
+    flagMarker.current = new maplibregl.Marker({ element: node }).setLngLat([flag.lon, flag.lat])
+      .setPopup(new maplibregl.Popup({ offset: 18 }).setText(flag.label)).addTo(m);
+    flagMarker.current.togglePopup();
+    m.flyTo({ center: [flag.lon, flag.lat], zoom: Math.max(m.getZoom(), 17) });
+    const t = setTimeout(() => { flagMarker.current?.remove(); flagMarker.current = null; }, 30_000);
+    return () => clearTimeout(t);
+  }, [flag]);
 
   // Unclaimed trackers: grey "?" pins, so you can tell which physical collar is which before naming it.
   useEffect(() => {

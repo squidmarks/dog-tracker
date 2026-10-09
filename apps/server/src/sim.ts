@@ -63,7 +63,7 @@ function substep(d: SimDog, dt: number, area: Area, rand: () => number): void {
       d.paused = 0;
       d.heading += (rand() - 0.5) * 1.6;
       if (area.signedDist(d.x, d.y) > -EDGE_BUFFER * 2.5) d.heading = toCentre() + (rand() - 0.5) * 1.2;
-      speed = 6 + rand() * 5;
+      speed = 5 + rand() * 4;     // 11-20 mph: a quick dog in a yard
       d.zoomies -= dt;
       if (d.zoomies <= 0) d.scenario = "wander";
       break;
@@ -87,7 +87,7 @@ function substep(d: SimDog, dt: number, area: Area, rand: () => number): void {
   d.y += Math.sin(d.heading) * speed * dt;
   // A wandering dog respects the fence even on a big time step: pull it back inside.
   if (d.scenario === "wander" || d.scenario === "silent" || d.scenario === "zoomies") {
-    for (let i = 0; i < 40 && area.signedDist(d.x, d.y) > -EDGE_BUFFER; i++) {
+    for (let i = 0; i < 3 && area.signedDist(d.x, d.y) > -EDGE_BUFFER; i++) {   // a gentle nudge: it must not add speed
       const dx = area.centre.x - d.x, dy = area.centre.y - d.y, len = Math.hypot(dx, dy) || 1;
       d.x += (dx / len) * 1.5; d.y += (dy / len) * 1.5;
     }

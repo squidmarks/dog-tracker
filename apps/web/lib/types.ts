@@ -2,6 +2,7 @@ export interface Live {
   battery: number | null; voltage: number | null; last_heard: number | null;
   lat: number | null; lon: number | null; pos_ts: number | null; speed: number | null; sats: number | null;
   gateway: string | null; rssi: number | null; snr: number | null;
+  heading?: number | null; hdop?: number | null; temperature?: number | null; lux?: number | null;
 }
 export interface Dog extends Live {
   id: string; name: string; color: string | null; emoji: string | null; breed: string | null; notes: string | null;
@@ -88,3 +89,40 @@ export function resolveRange(r: TrackRange, nowS = Date.now() / 1000): { from: n
 }
 /** Identity of a range that doesn't change as the clock ticks (used to know when to refetch). */
 export const rangeKey = (r: TrackRange) => `${r.preset}:${r.customFrom ?? ""}:${r.customTo ?? ""}`;
+
+// --- What the trail layer shows -------------------------------------------------------------------------------
+// "Recent" is a rolling window that fades to nothing at its far end; "History" is a fixed or day-based window,
+// drawn as a heat map (where the dog spent its time) or as faded trails.
+export const RECENT_STOPS = [5, 10, 15, 30, 60, 120, 240, 360]; // minutes, the slider's positions
+export type TrailView =
+  | { mode: "recent"; minutes: number }
+  | { mode: "history"; range: TrackRange; style: "heat" | "trails" };
+
+export const minutesLabel = (m: number) => (m < 60 ? `${m} min` : m % 60 === 0 ? `${m / 60} h` : `${(m / 60).toFixed(1)} h`);
+
+export interface ResolvedView {
+  from: number; to: number; rolling: boolean;
+  kind: "trails" | "heat";
+  /** Recent trails fade all the way out; long trails keep a faint floor so the whole day stays legible. */
+  fadeToZero: boolean;
+  /** How often to refetch while the window is rolling, in seconds. */
+  refreshS: number;
+}
+
+export function resolveView(v: TrailView, nowS = Date.now() / 1000): ResolvedView {
+  if (v.mode === "recent") {
+    return { from: nowS - v.minutes * 60, to: nowS, rolling: true, kind: "trails", fadeToZero: true, refreshS: 5 };
+  }
+  const r = resolveRange(v.range, nowS);
+  return { ...r, kind: v.style === "heat" ? "heat" : "trails", fadeToZero: false, refreshS: v.style === "heat" ? 20 : 10 };
+}
+/** Identity of a view that doesn't change as the clock ticks (used to know when to refetch). */
+export const viewKey = (v: TrailView) =>
+  v.mode === "recent" ? `recent:${v.minutes}` : `history:${rangeKey(v.range)}:${v.style}`;
+
+// --- Activity stats (distances in metres, speeds in m/s; see lib/units.ts for display) ------------------------
+export interface TopSpeed { mps: number; ts: number; lat: number; lon: number; source: "reported" | "derived" }
+export interface Stats { fixes: number; distanceM: number; movingS: number; topSpeed: TopSpeed | null; medianIntervalS: number | null }
+export interface LeaderRow { dogId: string; name: string; emoji: string | null; color: string | null; sim: boolean; stats: Stats }
+export interface HeatCell { lat: number; lon: number; w: number }
+export interface TelemetryPoint { ts: number; battery: number | null; voltage: number | null; temperature: number | null; lux: number | null }

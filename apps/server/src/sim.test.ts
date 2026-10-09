@@ -73,8 +73,8 @@ describe("zoomies and realistic reports", () => {
       top = Math.max(top, d.speedNow);
       expect(area.signedDist(d.x, d.y)).toBeLessThan(0);
     }
-    expect(top).toBeGreaterThan(6);
-    expect(top).toBeLessThan(12);
+    expect(top).toBeGreaterThan(5);
+    expect(top).toBeLessThan(9.1);
     expect(d.scenario).toBe("wander");
   });
 

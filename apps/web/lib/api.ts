@@ -1,4 +1,4 @@
-import type { Dog, DogEvent, Hub, Notifications, Settings, SimState, Tracker, TrackPoint, Zone } from "./types";
+import type { Dog, DogEvent, HeatCell, Hub, LeaderRow, Notifications, Settings, SimState, Stats, TelemetryPoint, Tracker, TrackPoint, Zone } from "./types";
 
 async function json<T>(res: Response): Promise<T> {
   const body = await res.json().catch(() => ({}));
@@ -24,6 +24,10 @@ export const api = {
   events: (limit = 30) => fetch(`/api/events?limit=${limit}`).then((r) => json<DogEvent[]>(r)),
   settings: () => fetch("/api/settings").then((r) => json<Settings>(r)),
   updateSettings: (input: Partial<Settings>) => send("PUT", "/api/settings", input).then((r) => json<Settings>(r)),
+  stats: (from: number, to: number) => fetch(`/api/stats?from=${Math.floor(from)}&to=${Math.ceil(to)}`).then((r) => json<LeaderRow[]>(r)),
+  dogStats: (dogId: string, from: number, to: number) => fetch(`/api/dogs/${dogId}/stats?from=${Math.floor(from)}&to=${Math.ceil(to)}`).then((r) => json<Stats>(r)),
+  heat: (dogId: string, from: number, to: number) => fetch(`/api/dogs/${dogId}/heat?from=${Math.floor(from)}&to=${Math.ceil(to)}`).then((r) => json<HeatCell[]>(r)),
+  telemetry: (dogId: string, hours = 24) => fetch(`/api/dogs/${dogId}/telemetry?hours=${hours}`).then((r) => json<TelemetryPoint[]>(r)),
   hubs: () => fetch("/api/hubs").then((r) => json<Hub[]>(r)),
   notifications: () => fetch("/api/notifications").then((r) => json<Notifications>(r)),
   subscribePush: (subscription: PushSubscriptionJSON, label: string) =>

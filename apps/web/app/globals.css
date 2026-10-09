@@ -104,3 +104,27 @@ h2 button.link { margin-left: 0; }
 .channel button.link { border: 0; background: none; color: #2e86ab; padding: 0; margin: 0 0 0 8px; }
 .devices { margin: 8px 0 0; padding-left: 18px; font-size: 13px; }
 .ok { color: #3ba55c; font-size: 13px; }
+
+.seg { display: inline-flex; border-radius: 7px; overflow: hidden; border: 1px solid var(--muted); }
+.seg button { font: inherit; font-size: 12px; padding: 4px 10px; border: 0; background: var(--card); color: var(--fg); cursor: pointer; }
+.seg button.on { background: #2e86ab; color: #fff; }
+.seg.small button { padding: 2px 8px; font-size: 11px; }
+h2 .seg { text-transform: none; letter-spacing: 0; }
+.rangectl .row2 { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.slider { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.slider input[type=range] { width: 150px; accent-color: #2e86ab; padding: 0; border: 0; background: none; }
+.slider b { color: var(--fg); min-width: 52px; }
+.legend i.fade { background: linear-gradient(90deg, #888, #8880); }
+.legend i.heat { background: linear-gradient(90deg, #2e86ab11, #2e86ab, #e4572e); }
+.card.stat b { display: flex; align-items: center; gap: 6px; }
+.statline { display: flex; gap: 12px; flex-wrap: wrap; font-size: 13px; margin-top: 4px; }
+.statline big { font-size: 18px; font-weight: 600; }
+button.topspeed { display: block; margin: 6px 0 0; text-align: left; font-size: 13px; }
+.spark { display: flex; align-items: center; gap: 8px; margin-top: 6px; color: var(--muted); font-size: 12px; }
+.pin { position: relative; }
+.pin .emo { position: relative; z-index: 1; }
+.pin .arrowwrap { position: absolute; inset: -10px; pointer-events: none; display: none; }
+.pin .arrowwrap i { position: absolute; top: -3px; left: 50%; margin-left: -6px; width: 0; height: 0; border-left: 6px solid transparent; border-right: 6px solid transparent; border-bottom: 11px solid #333; filter: drop-shadow(0 0 1px #fff); }
+.pin.flag { background: #fff; font-size: 18px; }
+.rangectl > .seg { display: flex; }
+.rangectl > .seg button { flex: 1; }
