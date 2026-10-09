@@ -104,6 +104,27 @@ describe.skipIf(!hasMongo)("HubMonitor (Mongo)", () => {
     await expect(hubs.setLocation("!49b7716c", 200, 0)).rejects.toThrow(/out of range/);
   });
 
+  it("treats a collar relayed through a phone as a mobile gateway: tracked, never alerted", async () => {
+    const collar = "!c0ffee01";
+    await db.apply({ kind: "position", node: collar, packetId: 1, gateway: "!g", rssi: -80, snr: 5, ts: T0, lat: 45, lon: -64, alt: null, speed: null, sats: 8 }, T0);
+    await hubs.onBrokerLog(`New client connected from 1.2.3.4:1 as ${collar} (p4, c1, k15, u'meshtastic').`, T0);
+    await hubs.onBrokerLog(`Client ${collar} [1.2.3.4:1] disconnected: exceeded timeout.`, T0 + 100);
+    await hubs.tick(T0 + 300);                                         // the phone walked away
+    expect(events).toHaveLength(0);                                    // no "hub offline" for a collar
+    const listed = (await hubs.list()).find((h) => h.id === collar)!;
+    expect(listed).toMatchObject({ mobile: true, status: "offline" });
+  });
+
+  it("a real hub next to a mobile gateway still alerts when it goes down", async () => {
+    await db.apply({ kind: "position", node: "!c0ffee01", packetId: 1, gateway: "!g", rssi: -80, snr: 5, ts: T0, lat: 45, lon: -64, alt: null, speed: null, sats: 8 }, T0);
+    await hubs.onPacket("!c0ffee01", T0);
+    await hubs.onBrokerLog(connect, T0);
+    await hubs.onBrokerLog(dropped, T0 + 100);
+    await hubs.tick(T0 + 300);
+    expect(events.map((e) => e.type)).toEqual(["hub_offline"]);
+    expect((await hubs.list()).find((h) => h.id === "!49b7716c")).toMatchObject({ mobile: false });
+  });
+
   it("ignores clients that aren't hubs and survives a restart", async () => {
     await hubs.onBrokerLog("New client connected from 1.2.3.4:1 as mqttjs_ab12 (p4, c1, k60, u'meshtastic').", T0);
     expect(await hubs.list()).toEqual([]);

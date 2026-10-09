@@ -372,6 +372,10 @@ export async function openDb(url: string, dbName: string) {
         : await hubsCol.updateOne({ _id: id }, { $set: { lat, lon } });
       return result.matchedCount > 0;
     },
+    /** True when this node has ever reported a GPS position: it's a tracker (a collar), not a fixed hub. */
+    async hasPositions(node: string): Promise<boolean> {
+      return !!(await positions.findOne({ node }, { projection: { _id: 1 } }));
+    },
     /** Best display name for a node: its Meshtastic long name, else its id. */
     async nodeName(id: string): Promise<string> {
       return (await nodes.findOne({ _id: id }))?.long_name || id;

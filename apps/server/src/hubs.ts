@@ -17,7 +17,8 @@ export function parseBrokerLog(line: string): BrokerLogEvent | null {
   return null;
 }
 
-export interface Hub extends HubDoc { name: string; lat: number | null; lon: number | null }
+/** `mobile` is a collar acting as a gateway (a phone relaying for it): it comes and goes with the walk, so it never raises alerts. */
+export interface Hub extends HubDoc { name: string; lat: number | null; lon: number | null; mobile: boolean }
 
 interface State extends HubDoc {
   /** Broker's view: true = connected now, false = disconnected, null = unknown (e.g. just after a restart). */
@@ -61,6 +62,9 @@ export class HubMonitor {
     if (h.status === status) return;
     h.status = status; h.since = now;
     await this.db.saveHub(this.plain(h));
+    // A collar relaying through a phone is a gateway only while the phone is with it. It's expected to drop off
+    // when you walk out of range of the phone, so track it quietly instead of alerting "hub offline".
+    if (await this.db.hasPositions(h.id)) return;
     const name = await this.db.nodeName(h.id);
     const e = await this.db.addEvent({
       ts: now, type: status === "offline" ? "hub_offline" : "hub_online", dogId: "", dogName: name, hubId: h.id,
@@ -115,6 +119,8 @@ export class HubMonitor {
   }
 
   async list(): Promise<Hub[]> {
-    return Promise.all([...this.hubs.values()].map(async (h) => ({ ...this.plain(h), lat: h.lat ?? null, lon: h.lon ?? null, name: await this.db.nodeName(h.id) })));
+    return Promise.all([...this.hubs.values()].map(async (h) => ({
+      ...this.plain(h), lat: h.lat ?? null, lon: h.lon ?? null, name: await this.db.nodeName(h.id), mobile: await this.db.hasPositions(h.id),
+    })));
   }
 }

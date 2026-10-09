@@ -145,7 +145,7 @@ export function startHa(client: MqttClient, db: Db, monitor: Monitor, listHubs: 
   };
   /** One connectivity sensor per LoRa hub, so Home Assistant can alert (or dashboard) on a dead hub too. */
   const publishHubs = async () => {
-    for (const h of await listHubs()) {
+    for (const h of (await listHubs()).filter((x) => !x.mobile)) {   // a phone-relayed collar isn't a hub
       const s = h.id.replace(/^!/, "");
       pub(`homeassistant/binary_sensor/${PREFIX}_hub_${s}/online/config`, {
         availability_topic: STATUS_TOPIC, unique_id: `${PREFIX}_hub_${s}_online`, name: "Online", device_class: "connectivity",

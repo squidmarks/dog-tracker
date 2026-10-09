@@ -245,16 +245,18 @@ export default function Page() {
             <h2>LoRa hubs <span className="count">{hubs.length}</span></h2>
             {hubs.map((h) => (
               <div key={h.id} className="card hub">
-                <b><span className={`status ${h.status}`} />{h.name}</b>
+                <b><span className={`status ${h.status}`} />{h.name}{h.mobile && <span className="badge" title="A collar relayed through a phone">phone</span>}</b>
                 <div className={`meta ${h.status === "offline" ? "stale" : ""}`}>
                   {h.status === "online" ? "Online" : "Offline"} since {ago(h.since, now).replace(" ago", " ago")}
                   {h.lastPacket && h.status === "online" ? ` · last packet ${ago(h.lastPacket, now)}` : ""}
                 </div>
-                <div className="meta">
-                  {h.lat != null ? "📍 Placed on the map" : "Not placed on the map yet"}
-                  <button className="link" onClick={() => setPlacingHub(h.id)}>{h.lat != null ? "Move" : "Place on map"}</button>
-                  {h.lat != null && <button className="link" onClick={() => api.placeHub(h.id, null, null).then(load)}>Clear</button>}
-                </div>
+                {!h.mobile && (
+                  <div className="meta">
+                    {h.lat != null ? "📍 Placed on the map" : "Not placed on the map yet"}
+                    <button className="link" onClick={() => setPlacingHub(h.id)}>{h.lat != null ? "Move" : "Place on map"}</button>
+                    {h.lat != null && <button className="link" onClick={() => api.placeHub(h.id, null, null).then(load)}>Clear</button>}
+                  </div>
+                )}
               </div>
             ))}
           </section>
@@ -351,9 +353,9 @@ export default function Page() {
             )}
           </div>
         </div>
-        {hubs.some((h) => h.status === "offline") && (
+        {hubs.some((h) => h.status === "offline" && !h.mobile) && (
           <div className="hubbanner" role="alert">
-            ⚠️ {hubs.filter((h) => h.status === "offline").map((h) => `LoRa hub ${h.name} has been offline for ${ago(h.since, now).replace(" ago", "")}`).join(" · ")}.
+            ⚠️ {hubs.filter((h) => h.status === "offline" && !h.mobile).map((h) => `LoRa hub ${h.name} has been offline for ${ago(h.since, now).replace(" ago", "")}`).join(" · ")}.
             {" "}Collars can&apos;t report until it&apos;s back.
           </div>
         )}

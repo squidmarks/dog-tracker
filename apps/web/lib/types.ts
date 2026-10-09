@@ -35,6 +35,8 @@ export interface Hub {
   id: string; name: string; status: "online" | "offline"; since: number; lastPacket: number | null;
   /** Set when the hub has been placed on the map (it has no GPS of its own). */
   lat: number | null; lon: number | null;
+  /** A collar relayed through a phone (comes and goes with the walk): shown, but never alerts. */
+  mobile?: boolean;
 }
 export interface SignalPoint { ts: number; lat: number; lon: number; snr: number | null; rssi: number | null }
 export interface CoverageGap { from: { ts: number; lat: number; lon: number }; to: { ts: number; lat: number; lon: number }; seconds: number }
