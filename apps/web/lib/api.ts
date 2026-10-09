@@ -1,4 +1,4 @@
-import type { Dog, DogEvent, HeatCell, Hub, LeaderRow, Notifications, Settings, SimState, Stats, TelemetryPoint, Tracker, TrackPoint, Zone } from "./types";
+import type { Dog, DogEvent, HeatCell, Hub, LeaderRow, Notifications, Settings, Signal, SimState, Stats, TelemetryPoint, Tracker, TrackPoint, Zone } from "./types";
 
 async function json<T>(res: Response): Promise<T> {
   const body = await res.json().catch(() => ({}));
@@ -26,6 +26,8 @@ export const api = {
   updateSettings: (input: Partial<Settings>) => send("PUT", "/api/settings", input).then((r) => json<Settings>(r)),
   stats: (from: number, to: number) => fetch(`/api/stats?from=${Math.floor(from)}&to=${Math.ceil(to)}`).then((r) => json<LeaderRow[]>(r)),
   dogStats: (dogId: string, from: number, to: number) => fetch(`/api/dogs/${dogId}/stats?from=${Math.floor(from)}&to=${Math.ceil(to)}`).then((r) => json<Stats>(r)),
+  signal: (dogId: string, from: number, to: number) => fetch(`/api/dogs/${dogId}/signal?from=${Math.floor(from)}&to=${Math.ceil(to)}`).then((r) => json<Signal>(r)),
+  placeHub: (id: string, lat: number | null, lon: number | null) => send("PATCH", `/api/hubs/${encodeURIComponent(id)}`, { lat, lon }).then((r) => json<{ ok: true }>(r)),
   heat: (dogId: string, from: number, to: number) => fetch(`/api/dogs/${dogId}/heat?from=${Math.floor(from)}&to=${Math.ceil(to)}`).then((r) => json<HeatCell[]>(r)),
   telemetry: (dogId: string, hours = 24) => fetch(`/api/dogs/${dogId}/telemetry?hours=${hours}`).then((r) => json<TelemetryPoint[]>(r)),
   hubs: () => fetch("/api/hubs").then((r) => json<Hub[]>(r)),

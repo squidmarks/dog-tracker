@@ -24,6 +24,12 @@ describe("resolveView", () => {
       .not.toBe(viewKey({ mode: "history", range: { preset: "today" }, style: "trails" }));
   });
 
+  it("coverage looks at a day-based range, refreshes slowly, and has its own key", () => {
+    const v = resolveView({ mode: "coverage", range: { preset: "week" } }, noon);
+    expect(v).toMatchObject({ kind: "coverage", rolling: true, fadeToZero: false });
+    expect(viewKey({ mode: "coverage", range: { preset: "week" } })).not.toBe(viewKey({ mode: "history", range: { preset: "week" }, style: "heat" }));
+  });
+
   it("slider stops are ordered and labelled", () => {
     expect([...RECENT_STOPS].sort((x, y) => x - y)).toEqual(RECENT_STOPS);
     expect(minutesLabel(30)).toBe("30 min");

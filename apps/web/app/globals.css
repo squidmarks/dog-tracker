@@ -135,3 +135,12 @@ h2 .seg.small { margin-right: 4px; }
 
 .seg.period { display: flex; width: 100%; margin-bottom: 10px; }
 .seg.period button { flex: 1; font-size: 12px; padding: 5px 0; }
+
+.rangectl > .seg button { white-space: nowrap; }
+.qlegend { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 11px; color: var(--muted); max-width: 250px; }
+.qlegend span { display: inline-flex; align-items: center; gap: 4px; }
+.qlegend i { width: 10px; height: 10px; border-radius: 50%; border: 1px solid #fff; box-shadow: 0 0 0 1px #0002; display: inline-block; }
+.qlegend i.gap { border-radius: 0; height: 0; width: 14px; border: 0; border-top: 3px dashed #6b7280; box-shadow: none; }
+.card.hub .meta button.link { margin-left: 10px; font-size: 12px; }
+.pin.hub { background: #fff; font-size: 17px; }
+.pin.hub.offline { background: #d64545; }

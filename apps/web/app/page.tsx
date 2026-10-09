@@ -2,13 +2,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { DogDialog, type DogDialogState } from "../components/DogDialog";
 import { BatterySpark } from "../components/BatterySpark";
-import { MapView, type BaseLayer, type Flag, type Focus } from "../components/MapView";
+import { MapView, type BaseLayer, type CoverageInfo, type Flag, type Focus } from "../components/MapView";
+import { QUALITY } from "../lib/coverage";
 import { SettingsDialog } from "../components/SettingsDialog";
 import { DogStats, STATS_PERIODS, usePeriodStats, type StatsPeriod } from "../components/DogStats";
 import { ZoneDialog, type ZoneDialogState } from "../components/ZoneDialog";
 import { api } from "../lib/api";
 import { distanceM } from "../lib/geo";
-import type { Units } from "../lib/units";
+import { formatDistance, type Units } from "../lib/units";
 import {
   ago, ALERT_LABEL, batteryLabel, dogColor, dogEmoji, EVENT_ICON, trackerLabel,
   minutesLabel, RANGE_LABEL, RECENT_STOPS, type Dog, type DogEvent, type DrawState, type Hub, type RangePreset, type SimState, type TrailView, type Tracker, type Zone,
@@ -40,6 +41,8 @@ export default function Page() {
   const [base, setBase] = useState<BaseLayer>("map");
   const [view, setView] = useState<TrailView>({ mode: "recent", minutes: 30 });
   const [flag, setFlag] = useState<Flag | null>(null);
+  const [placingHub, setPlacingHub] = useState<string | null>(null);
+  const [coverage, setCoverage] = useState<CoverageInfo | null>(null);
   const [units, setUnits] = useState<Units>("imperial");
   const [period, setPeriod] = useState<StatsPeriod>("today");
   const { rows: statRows, fastest } = usePeriodStats(period);
@@ -247,6 +250,11 @@ export default function Page() {
                   {h.status === "online" ? "Online" : "Offline"} since {ago(h.since, now).replace(" ago", " ago")}
                   {h.lastPacket && h.status === "online" ? ` · last packet ${ago(h.lastPacket, now)}` : ""}
                 </div>
+                <div className="meta">
+                  {h.lat != null ? "📍 Placed on the map" : "Not placed on the map yet"}
+                  <button className="link" onClick={() => setPlacingHub(h.id)}>{h.lat != null ? "Move" : "Place on map"}</button>
+                  {h.lat != null && <button className="link" onClick={() => api.placeHub(h.id, null, null).then(load)}>Clear</button>}
+                </div>
               </div>
             ))}
           </section>
@@ -275,7 +283,8 @@ export default function Page() {
       </aside>
 
       <div className="mapwrap">
-        <MapView dogs={dogs} trackers={trackers} zones={zones} draw={draw} focus={focus} flag={flag} base={base} view={view}
+        <MapView dogs={dogs} trackers={trackers} zones={zones} hubs={hubs} draw={draw} placing={!!placingHub} focus={focus} flag={flag} base={base} view={view}
+          onPlaceHub={(lat, lon) => { const id = placingHub; setPlacingHub(null); if (id) api.placeHub(id, lat, lon).then(load).catch((e) => alert(e.message)); }} onCoverage={setCoverage}
           onDrawClick={onDrawClick} onZoneClick={(id) => { const z = zones.find((x) => x.id === id); if (z) setZoneDialog({ zone: z }); }} />
         <div className="mapctl">
           <div className="basectl" role="group" aria-label="Map style">
@@ -286,6 +295,7 @@ export default function Page() {
             <div className="seg" role="group" aria-label="Trail mode">
               <button className={view.mode === "recent" ? "on" : ""} onClick={() => setView({ mode: "recent", minutes: 30 })}>Recent</button>
               <button className={view.mode === "history" ? "on" : ""} onClick={() => setView({ mode: "history", range: { preset: "today" }, style: "heat" })}>History</button>
+              <button className={view.mode === "coverage" ? "on" : ""} onClick={() => setView({ mode: "coverage", range: { preset: "week" } })}>Coverage</button>
             </div>
             {view.mode === "recent" ? (
               <>
@@ -297,7 +307,7 @@ export default function Page() {
                 </label>
                 <div className="legend" aria-hidden><span>now</span><i className="fade" /><span>{minutesLabel(view.minutes)} ago</span></div>
               </>
-            ) : (
+            ) : view.mode === "history" ? (
               <>
                 <div className="row2">
                   <select aria-label="History range" value={view.range.preset} onChange={(e) => {
@@ -323,6 +333,21 @@ export default function Page() {
                 )}
                 <div className="legend" aria-hidden><span>{view.style === "heat" ? "less time" : "older"}</span><i className={view.style === "heat" ? "heat" : ""} /><span>{view.style === "heat" ? "more time" : "newer"}</span></div>
               </>
+            ) : (
+              <>
+                <select aria-label="Coverage range" value={view.range.preset} onChange={(e) => setView({ mode: "coverage", range: { preset: e.target.value as RangePreset } })}>
+                  {(["today", "yesterday", "week"] as RangePreset[]).map((k) => <option key={k} value={k}>{RANGE_LABEL[k]}</option>)}
+                </select>
+                <div className="qlegend" aria-label="Signal quality">
+                  {QUALITY.map((q) => <span key={q.label} title={q.hint}><i style={{ background: q.color }} />{q.label}</span>)}
+                  <span title="The dog went quiet here: reports didn't get through"><i className="gap" />No reports</span>
+                </div>
+                {hubs.some((h) => h.lat != null) ? (
+                  <div className="meta">{coverage
+                    ? `Farthest heard: ${formatDistance(coverage.metres, units)} from ${coverage.hubName} (${coverage.dogName})`
+                    : "No reports in this period yet."}</div>
+                ) : <div className="meta">Place the hub on the map (LoRa hubs, in the sidebar) to measure how far it reaches.</div>}
+              </>
             )}
           </div>
         </div>
@@ -330,6 +355,12 @@ export default function Page() {
           <div className="hubbanner" role="alert">
             ⚠️ {hubs.filter((h) => h.status === "offline").map((h) => `LoRa hub ${h.name} has been offline for ${ago(h.since, now).replace(" ago", "")}`).join(" · ")}.
             {" "}Collars can&apos;t report until it&apos;s back.
+          </div>
+        )}
+        {placingHub && (
+          <div className="drawbar">
+            <span>Click the map where {hubs.find((h) => h.id === placingHub)?.name ?? "the hub"} is</span>
+            <button onClick={() => setPlacingHub(null)}>Cancel</button>
           </div>
         )}
         {draw && (

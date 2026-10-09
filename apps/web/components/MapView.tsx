@@ -3,8 +3,9 @@ import * as maplibregl from "maplibre-gl";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { circleRing, distanceM } from "../lib/geo";
+import { farthestHeard, gapsGeoJSON, QUALITY, signalGeoJSON } from "../lib/coverage";
 import { trackSegments } from "../lib/track";
-import { ago, dogColor, dogEmoji, resolveView, trackerLabel, viewKey, type DrawState, type Dog, type Tracker, type TrailView, type Zone } from "../lib/types";
+import { ago, dogColor, dogEmoji, resolveView, trackerLabel, viewKey, type DrawState, type Dog, type Hub, type SignalPoint, type Tracker, type TrailView, type Zone } from "../lib/types";
 
 // MapLibre's web worker can't be bundled by Next; it is copied to /public by the copy-worker script.
 maplibregl.setWorkerUrl("/maplibre-gl-worker.mjs");
@@ -12,6 +13,8 @@ maplibregl.setWorkerUrl("/maplibre-gl-worker.mjs");
 export interface Focus { lat: number; lon: number; n: number }
 /** A temporary flag on the map, e.g. "Maple's top speed was here". `n` changes to re-show the same place. */
 export interface Flag { lat: number; lon: number; label: string; n: number }
+/** How far the hub actually reached, over the dogs on screen. */
+export interface CoverageInfo { metres: number; dogName: string; hubName: string }
 
 const hexToRgba = (hex: string, a: number) => {
   const n = parseInt(hex.replace("#", ""), 16);
@@ -49,6 +52,9 @@ const zonesGeoJSON = (zones: Zone[]) => ({
   })),
 });
 
+/** A hub pin turns red when the hub is offline. */
+function node_status(el: HTMLElement, h: Hub) { el.classList.toggle("offline", h.status === "offline"); }
+
 export type BaseLayer = "map" | "satellite";
 
 /** Each dog has a heat-map layer (underneath) and a trail layer; only one of them has data at a time. */
@@ -60,6 +66,19 @@ function ensureLayers(m: maplibregl.Map, d: Dog) {
       "heatmap-radius": ["interpolate", ["linear"], ["zoom"], 12, 4, 15, 12, 17, 22, 19, 40],
     } });
   }
+  if (!m.getSource(`cg-${d.id}`)) {
+    m.addSource(`cg-${d.id}`, { type: "geojson", data: EMPTY });
+    m.addLayer({ id: `cg-${d.id}`, type: "line", source: `cg-${d.id}`, layout: { "line-cap": "round" },
+      paint: { "line-color": "#6b7280", "line-width": 3, "line-dasharray": [1.5, 1.5], "line-opacity": 0.9 } });
+  }
+  if (!m.getSource(`c-${d.id}`)) {
+    m.addSource(`c-${d.id}`, { type: "geojson", data: EMPTY });
+    m.addLayer({ id: `c-${d.id}`, type: "circle", source: `c-${d.id}`, paint: {
+      "circle-radius": ["interpolate", ["linear"], ["zoom"], 13, 2.5, 17, 5, 19, 8],
+      "circle-color": ["step", ["get", "q"], QUALITY[0].color, 1, QUALITY[1].color, 2, QUALITY[2].color, 3, QUALITY[3].color],
+      "circle-stroke-color": "#ffffff", "circle-stroke-width": 0.8, "circle-opacity": 0.92,
+    } });
+  }
   if (!m.getSource(`t-${d.id}`)) {
     m.addSource(`t-${d.id}`, { type: "geojson", data: EMPTY });
     m.addLayer({ id: `t-${d.id}`, type: "line", source: `t-${d.id}`,
@@ -68,12 +87,16 @@ function ensureLayers(m: maplibregl.Map, d: Dog) {
   }
 }
 
-export function MapView({ dogs, trackers, zones, draw, focus, flag, base, view, onDrawClick, onZoneClick }: {
-  dogs: Dog[]; trackers: Tracker[]; zones: Zone[]; draw: DrawState | null; focus: Focus | null; flag: Flag | null; base: BaseLayer; view: TrailView;
-  onDrawClick: (lat: number, lon: number) => void; onZoneClick: (id: string) => void;
+export function MapView({ dogs, trackers, zones, hubs, draw, placing, focus, flag, base, view, onDrawClick, onZoneClick, onPlaceHub, onCoverage }: {
+  dogs: Dog[]; trackers: Tracker[]; zones: Zone[]; hubs: Hub[]; draw: DrawState | null; placing: boolean; focus: Focus | null; flag: Flag | null; base: BaseLayer; view: TrailView;
+  onDrawClick: (lat: number, lon: number) => void; onZoneClick: (id: string) => void; onPlaceHub: (lat: number, lon: number) => void; onCoverage?: (info: CoverageInfo | null) => void;
 }) {
-  const live = useRef({ draw, zones, base, onDrawClick, onZoneClick });
-  live.current = { draw, zones, base, onDrawClick, onZoneClick };
+  const live = useRef({ draw, zones, base, placing, onDrawClick, onZoneClick, onPlaceHub });
+  live.current = { draw, zones, base, placing, onDrawClick, onZoneClick, onPlaceHub };
+  const hubsRef = useRef(hubs);
+  hubsRef.current = hubs;
+  const hubMarkers = useRef(new Map<string, maplibregl.Marker>());
+  const coverageData = useRef(new Map<string, SignalPoint[]>());
   const el = useRef<HTMLDivElement>(null);
   const map = useRef<maplibregl.Map | null>(null);
   const dogMarkers = useRef(new Map<string, maplibregl.Marker>());
@@ -123,7 +146,8 @@ export function MapView({ dogs, trackers, zones, draw, focus, flag, base, view, 
       m.addLayer({ id: "draw-points", type: "circle", source: "draw", filter: ["==", ["geometry-type"], "Point"], paint: { "circle-radius": 6, "circle-color": "#fff", "circle-stroke-color": "#8b5cf6", "circle-stroke-width": 3 } });
     });
     m.on("click", (e) => {
-      const { draw: d, onDrawClick: click, onZoneClick: zoneClick } = live.current;
+      const { draw: d, placing: place, onDrawClick: click, onZoneClick: zoneClick, onPlaceHub: placeHub } = live.current;
+      if (place) return placeHub(e.lngLat.lat, e.lngLat.lng);
       if (d) return click(e.lngLat.lat, e.lngLat.lng);
       if (!m.getLayer("zones-fill")) return;
       // A dog or tracker pin sits above zones; only open a zone when the click hit empty zone area.
@@ -162,8 +186,8 @@ export function MapView({ dogs, trackers, zones, draw, focus, flag, base, view, 
     if (!m) return;
     const apply = () => (m.getSource("draw") as maplibregl.GeoJSONSource | undefined)?.setData(drawGeoJSON(draw));
     if (ready) apply();
-    m.getCanvas().style.cursor = draw ? "crosshair" : "";
-  }, [draw, ready]);
+    m.getCanvas().style.cursor = draw || placing ? "crosshair" : "";
+  }, [draw, placing, ready]);
 
   // Dogs: marker + recent trail.
   useEffect(() => {
@@ -175,11 +199,12 @@ export function MapView({ dogs, trackers, zones, draw, focus, flag, base, view, 
       for (const [id, mk] of dogMarkers.current) {
         if (live.has(id)) continue;
         mk.remove(); dogMarkers.current.delete(id);
-        for (const prefix of ["t", "h"]) {
+        for (const prefix of ["t", "h", "c", "cg"]) {
           if (m.getLayer(`${prefix}-${id}`)) m.removeLayer(`${prefix}-${id}`);
           if (m.getSource(`${prefix}-${id}`)) m.removeSource(`${prefix}-${id}`);
         }
         lastTrack.current.delete(id);
+        coverageData.current.delete(id);
       }
       const bounds = new maplibregl.LngLatBounds();
       for (const d of dogs) {
@@ -213,7 +238,16 @@ export function MapView({ dogs, trackers, zones, draw, focus, flag, base, view, 
         ensureLayers(m, d);
         const trail = m.getSource(`t-${d.id}`) as maplibregl.GeoJSONSource;
         const heat = m.getSource(`h-${d.id}`) as maplibregl.GeoJSONSource;
-        if (v.kind === "trails") {
+        const cover = m.getSource(`c-${d.id}`) as maplibregl.GeoJSONSource;
+        const gaps = m.getSource(`cg-${d.id}`) as maplibregl.GeoJSONSource;
+        if (v.kind !== "coverage") { cover.setData(EMPTY); gaps.setData(EMPTY); coverageData.current.delete(d.id); }
+        if (v.kind === "coverage") {
+          const sig = await api.signal(d.id, v.from, v.to).catch(() => ({ points: [], gaps: [] }));
+          cover.setData(signalGeoJSON(sig.points));
+          gaps.setData(gapsGeoJSON(sig.gaps));
+          trail.setData(EMPTY); heat.setData(EMPTY);
+          coverageData.current.set(d.id, sig.points);
+        } else if (v.kind === "trails") {
           const track = await api.track(d.id, v.from, v.to).catch(() => []);
           m.setPaintProperty(`t-${d.id}`, "line-opacity", v.fadeToZero ? FADE_TO_ZERO : FADE_TO_FLOOR);
           m.setPaintProperty(`t-${d.id}`, "line-color", dogColor(d));
@@ -231,6 +265,7 @@ export function MapView({ dogs, trackers, zones, draw, focus, flag, base, view, 
           trail.setData(EMPTY);
         }
       }
+      reportCoverage();
       if (!fitted.current && !bounds.isEmpty()) {
         m.fitBounds(bounds, { padding: 80, maxZoom: 17, duration: 0 });
         fitted.current = true;
@@ -246,6 +281,41 @@ export function MapView({ dogs, trackers, zones, draw, focus, flag, base, view, 
     };
     void run();
   }, [dogs, ready, vKey]);
+
+  /** The farthest report any dog sent that the (placed) hub heard, so "how far do we reach?" has a number. */
+  const reportCoverage = () => {
+    if (!onCoverage) return;
+    const hub = hubsRef.current.find((h) => h.lat != null && h.lon != null);
+    if (!hub || viewRef.current.mode !== "coverage") return onCoverage(null);
+    let best: CoverageInfo | null = null;
+    for (const [dogId, pts] of coverageData.current) {
+      const far = farthestHeard(hub, pts);
+      if (far && (!best || far.metres > best.metres)) best = { metres: far.metres, dogName: dogsRef.current.find((d) => d.id === dogId)?.name ?? "A dog", hubName: hub.name };
+    }
+    onCoverage(best);
+  };
+
+  // Hubs have no GPS: once placed on the map they get a 📡 pin, so range can be read against it.
+  useEffect(() => {
+    const m = map.current;
+    if (!m) return;
+    const placed = hubs.filter((h) => h.lat != null && h.lon != null);
+    const ids = new Set(placed.map((h) => h.id));
+    for (const [id, mk] of hubMarkers.current) if (!ids.has(id)) { mk.remove(); hubMarkers.current.delete(id); }
+    for (const h of placed) {
+      let mk = hubMarkers.current.get(h.id);
+      if (!mk) {
+        const node = document.createElement("div");
+        node.className = "pin hub";
+        node.textContent = "📡";
+        mk = new maplibregl.Marker({ element: node }).setLngLat([h.lon!, h.lat!]).addTo(m);
+        hubMarkers.current.set(h.id, mk);
+      }
+      node_status(mk.getElement(), h);
+      mk.setLngLat([h.lon!, h.lat!]).setPopup(new maplibregl.Popup({ offset: 18 }).setText(`LoRa hub ${h.name} · ${h.status}`));
+    }
+    reportCoverage();
+  }, [hubs, ready]);
 
   // A temporary flag, e.g. where a dog hit its top speed.
   useEffect(() => {

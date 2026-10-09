@@ -31,7 +31,14 @@ export interface DogEvent {
 export interface Settings {
   staleMinutes: number; lowBatteryPct: number; fenceMarginM: number; hubSilentMinutes: number; pushoverEnabled: boolean;
 }
-export interface Hub { id: string; name: string; status: "online" | "offline"; since: number; lastPacket: number | null }
+export interface Hub {
+  id: string; name: string; status: "online" | "offline"; since: number; lastPacket: number | null;
+  /** Set when the hub has been placed on the map (it has no GPS of its own). */
+  lat: number | null; lon: number | null;
+}
+export interface SignalPoint { ts: number; lat: number; lon: number; snr: number | null; rssi: number | null }
+export interface CoverageGap { from: { ts: number; lat: number; lon: number }; to: { ts: number; lat: number; lon: number }; seconds: number }
+export interface Signal { points: SignalPoint[]; gaps: CoverageGap[] }
 export interface Notifications {
   pushover: { configured: boolean; enabled: boolean };
   webPush: { configured: boolean; publicKey: string | null; devices: { endpoint: string; label: string; createdAt: number; lastOk: number | null }[] };
@@ -96,13 +103,15 @@ export const rangeKey = (r: TrackRange) => `${r.preset}:${r.customFrom ?? ""}:${
 export const RECENT_STOPS = [5, 10, 15, 30, 60, 120, 240, 360]; // minutes, the slider's positions
 export type TrailView =
   | { mode: "recent"; minutes: number }
-  | { mode: "history"; range: TrackRange; style: "heat" | "trails" };
+  | { mode: "history"; range: TrackRange; style: "heat" | "trails" }
+  /** Where the signal was strong or weak along the route, and where reports dropped out. */
+  | { mode: "coverage"; range: TrackRange };
 
 export const minutesLabel = (m: number) => (m < 60 ? `${m} min` : m % 60 === 0 ? `${m / 60} h` : `${(m / 60).toFixed(1)} h`);
 
 export interface ResolvedView {
   from: number; to: number; rolling: boolean;
-  kind: "trails" | "heat";
+  kind: "trails" | "heat" | "coverage";
   /** Recent trails fade all the way out; long trails keep a faint floor so the whole day stays legible. */
   fadeToZero: boolean;
   /** How often to refetch while the window is rolling, in seconds. */
@@ -114,11 +123,12 @@ export function resolveView(v: TrailView, nowS = Date.now() / 1000): ResolvedVie
     return { from: nowS - v.minutes * 60, to: nowS, rolling: true, kind: "trails", fadeToZero: true, refreshS: 5 };
   }
   const r = resolveRange(v.range, nowS);
+  if (v.mode === "coverage") return { ...r, kind: "coverage", fadeToZero: false, refreshS: 20 };
   return { ...r, kind: v.style === "heat" ? "heat" : "trails", fadeToZero: false, refreshS: v.style === "heat" ? 20 : 10 };
 }
 /** Identity of a view that doesn't change as the clock ticks (used to know when to refetch). */
 export const viewKey = (v: TrailView) =>
-  v.mode === "recent" ? `recent:${v.minutes}` : `history:${rangeKey(v.range)}:${v.style}`;
+  v.mode === "recent" ? `recent:${v.minutes}` : v.mode === "coverage" ? `coverage:${rangeKey(v.range)}` : `history:${rangeKey(v.range)}:${v.style}`;
 
 // --- Activity stats (distances in metres, speeds in m/s; see lib/units.ts for display) ------------------------
 export interface TopSpeed { mps: number; ts: number; lat: number; lon: number; source: "reported" | "derived" }
