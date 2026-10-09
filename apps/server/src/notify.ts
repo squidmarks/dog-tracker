@@ -1,6 +1,6 @@
 import type { DogEvent } from "./db.js";
 
-const PRIORITY: Partial<Record<DogEvent["type"], number>> = { zone_exit: 1, zone_enter: 1, silent: 1, low_battery: 0, hub_offline: 1 };
+const PRIORITY: Partial<Record<DogEvent["type"], number>> = { zone_exit: 1, zone_enter: 1, silent: 1, low_battery: 0, hub_offline: 1, snooze_ended: 1 };
 
 /** Pushover notifications for alert events. Off until PUSHOVER_TOKEN and PUSHOVER_USER are set. */
 export function createNotifier(env = process.env, fetchImpl: typeof fetch = fetch) {

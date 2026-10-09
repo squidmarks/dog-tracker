@@ -7,6 +7,7 @@ import { freshDb, hasMongo } from "./testdb.js";
 let db: Db, base: string, close: () => void;
 const hooks = { onDogChanged: vi.fn(), onDogDeleted: vi.fn(), onZonesChanged: vi.fn(), listHubs: async () => [],
   setHubLocation: async (id: string) => id === "!hub00001",
+  onSnoozeChanged: vi.fn(),
   notifications: { pushoverConfigured: true, webPushConfigured: true, vapidPublicKey: "PUBKEY", testPushover: async () => true, testWebPush: async (e: string) => e === "https://push.example/ok" },
   getSim: () => null };
 const call = async (method: string, path: string, body?: unknown) => {
@@ -85,6 +86,19 @@ describe.skipIf(!hasMongo)("dogs API (Mongo)", () => {
     expect(sig.points[0]).toHaveProperty("rssi");
     expect(sig.gaps).toMatchObject([{ seconds: 1410, from: { ts: 1090 }, to: { ts: 2500 } }]);
     expect((await call("GET", `/api/dogs/${dog.id}/signal?from=5&to=1`)).status).toBe(400);
+  });
+
+  it("starts, reports and ends walking mode, and rejects silly durations", async () => {
+    expect((await call("GET", "/api/snooze")).body).toEqual({ active: false, until: null });
+    const on = (await call("PUT", "/api/snooze", { minutes: 60 })).body;
+    expect(on.active).toBe(true);
+    expect(on.until - Math.floor(Date.now() / 1000)).toBeGreaterThan(3590);
+    expect(on.until - Math.floor(Date.now() / 1000)).toBeLessThanOrEqual(3600);
+    expect(hooks.onSnoozeChanged).toHaveBeenCalled();
+    expect((await call("GET", "/api/snooze")).body.active).toBe(true);
+    expect((await call("PUT", "/api/snooze", { minutes: null })).body).toEqual({ active: false, until: null });
+    expect((await call("PUT", "/api/snooze", { minutes: 0 })).body.active).toBe(false);
+    for (const bad of [-5, 100000, "30"]) expect((await call("PUT", "/api/snooze", { minutes: bad })).status).toBe(400);
   });
 
   it("places a hub on the map and validates the request", async () => {

@@ -36,6 +36,59 @@ describe.skipIf(!hasMongo)("Monitor (Mongo)", () => {
     expect(monitor.isInside(dogId, (await db.zones())[0].id)).toBe(true);
   });
 
+  describe("walking mode (snooze)", () => {
+    const snoozeFor = (secs: number) => db.setSnooze(Math.floor(Date.now() / 1000) + secs);
+
+    it("logs exits and silence quietly while on, but never snoozes battery alerts", async () => {
+      await snoozeFor(3600);
+      await fix(2, 60); await fix(3, 65);
+      expect(events[0]).toMatchObject({ type: "zone_exit", alert: false, snoozed: true });
+      await db.apply({ kind: "telemetry", node: "!aaaa0001", battery: 80, voltage: 4 }, 1000);
+      await monitor.tick(1010);
+      await db.apply({ kind: "telemetry", node: "!aaaa0001", battery: 12, voltage: 3.3 }, 1020);
+      await monitor.tick(1030);
+      expect(events.find((e) => e.type === "low_battery")).toMatchObject({ alert: true });
+      expect(events.find((e) => e.type === "low_battery")!.snoozed).toBeUndefined();
+    });
+
+    it("on the way out, says so if a dog is still outside", async () => {
+      await snoozeFor(3600);
+      await fix(2, 60); await fix(3, 65);                       // left the yard during the walk
+      await monitor.tick(110);   // a clock close to the fixes, so the dog isn't "silent"                                      // seeds the "walking mode is on" state
+      await db.setSnooze(null);                                  // walking mode ended
+      await monitor.onSnoozeChanged();
+      const last = events.at(-1)!;
+      expect(last).toMatchObject({ type: "snooze_ended", alert: true, zoneName: "Yard" });
+      expect(last.message).toBe("Walking mode ended: Ozzie is still outside Yard");
+    });
+
+    it("stays quiet at the end when everyone is back in the yard", async () => {
+      await snoozeFor(3600);
+      await fix(2, 60); await fix(3, 65);
+      await fix(4, 20); await fix(5, 18);                        // back home
+      await monitor.tick(110);   // a clock close to the fixes, so the dog isn't "silent"
+      await db.setSnooze(null);
+      await monitor.onSnoozeChanged();
+      expect(events.filter((e) => e.type === "snooze_ended")).toHaveLength(0);
+    });
+
+    it("a dog with its own alerts off isn't nagged when walking mode ends", async () => {
+      await db.updateDog(dogId, { alerts: false });
+      await snoozeFor(3600);
+      await fix(2, 60); await fix(3, 65);
+      await monitor.tick(110);   // a clock close to the fixes, so the dog isn't "silent"
+      await db.setSnooze(null);
+      await monitor.onSnoozeChanged();
+      expect(events.filter((e) => e.type === "snooze_ended")).toHaveLength(0);
+    });
+
+    it("alerts normally before and after", async () => {
+      await fix(2, 60); await fix(3, 65);
+      expect(events[0]).toMatchObject({ type: "zone_exit", alert: true });
+      expect(events[0].snoozed).toBeUndefined();
+    });
+  });
+
   it("a dog with alerts turned off logs events quietly", async () => {
     await db.updateDog(dogId, { alerts: false });
     await fix(2, 60); await fix(3, 65);

@@ -18,6 +18,7 @@ export interface Hooks {
   onZonesChanged: () => unknown;
   listHubs: () => Promise<Hub[]>;
   setHubLocation: (id: string, lat: number | null, lon: number | null) => Promise<boolean>;
+  onSnoozeChanged: () => unknown;
   notifications: {
     pushoverConfigured: boolean;
     webPushConfigured: boolean;
@@ -207,6 +208,21 @@ export function createApp(db: Db, hooks: Hooks) {
     ok ? res.json({ ok: true }) : res.status(502).json({ error: hooks.notifications.pushoverConfigured ? "Pushover rejected the message" : "Pushover isn't configured on the server" });
   });
 
+  // --- Walking mode: snooze the exit/silence alerts for a while ---
+  const MAX_SNOOZE_MIN = 8 * 60;
+  const snoozeState = async () => { const until = await db.snooze(); return { active: until != null, until }; };
+  app.get("/api/snooze", async (_req, res) => res.json(await snoozeState()));
+  app.put("/api/snooze", async (req, res) => {
+    const minutes = req.body?.minutes;
+    if (minutes != null && (typeof minutes !== "number" || !Number.isFinite(minutes) || minutes < 0 || minutes > MAX_SNOOZE_MIN)) {
+      return res.status(400).json({ error: `minutes must be between 0 and ${MAX_SNOOZE_MIN}, or null to end walking mode` });
+    }
+    await db.setSnooze(minutes ? Math.floor(Date.now() / 1000) + Math.round(minutes * 60) : null);
+    await hooks.onSnoozeChanged();
+    broadcast({ kind: "snooze" });
+    res.json(await snoozeState());
+  });
+
   // --- LoRa hubs (gateways) ---
   app.get("/api/hubs", async (_req, res) => res.json(await hooks.listHubs()));
   // Hubs have no GPS: place one on the map (or clear it with nulls) so range can be measured from it.
@@ -259,7 +275,7 @@ export function createApp(db: Db, hooks: Hooks) {
     req.on("close", () => streams.delete(res));
   });
 
-  const broadcast = (ev: MeshEvent | { kind: "dogs" | "zones" | "hubs" } | { kind: "event"; event: unknown }) => {
+  const broadcast = (ev: MeshEvent | { kind: "dogs" | "zones" | "hubs" | "snooze" } | { kind: "event"; event: unknown }) => {
     for (const s of streams) s.write(`data: ${JSON.stringify(ev)}\n\n`);
   };
   // Dog edits made in one browser tab should refresh the others.

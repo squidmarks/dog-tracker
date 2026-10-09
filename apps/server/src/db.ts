@@ -48,7 +48,7 @@ export interface Zone {
 }
 export interface ZoneInput { name?: string; color?: string; ring?: [number, number][]; alertOn?: AlertOn; home?: boolean; dogs?: string[] | null }
 
-export type EventType = "zone_exit" | "zone_enter" | "silent" | "reporting" | "low_battery" | "battery_ok" | "hub_offline" | "hub_online";
+export type EventType = "zone_exit" | "zone_enter" | "silent" | "reporting" | "low_battery" | "battery_ok" | "hub_offline" | "hub_online" | "snooze_ended";
 export interface DogEvent {
   id: string; ts: number; type: EventType;
   /** Empty for hub events; `dogName` then carries the hub's name. */
@@ -56,8 +56,10 @@ export interface DogEvent {
   zoneId?: string; zoneName?: string; lat?: number | null; lon?: number | null;
   /** Worth interrupting the user for (drives push notifications and the highlighted timeline style). */
   alert: boolean; message: string;
-  /** Raised by a simulated tracker: shown in the UI, but never pushed to the phone. */
+  /** Raised by a simulated tracker: shown in the UI. */
   sim?: boolean;
+  /** Would have been an alert, but walking mode (snooze) was on: logged quietly instead. */
+  snoozed?: boolean;
 }
 
 export interface Settings {
@@ -355,6 +357,19 @@ export async function openDb(url: string, dbName: string) {
       if ("pushoverEnabled" in input) set.pushoverEnabled = input.pushoverEnabled !== false;
       if (Object.keys(set).length) await settingsCol.updateOne({ _id: "alerts" }, { $set: set }, { upsert: true });
       return api.settings();
+    },
+
+    // --- walking mode: a household-wide snooze of the exit/silence alerts ----------------------------------
+    /** The epoch second the snooze ends, or null when alerts aren't snoozed (or it has already run out). */
+    async snooze(at = now()): Promise<number | null> {
+      const doc = await (db.collection("settings") as Collection<{ _id: string; until?: number }>).findOne({ _id: "snooze" });
+      return doc?.until && doc.until > at ? doc.until : null;
+    },
+    /** Snooze until `untilTs`, or cancel with null. */
+    async setSnooze(untilTs: number | null): Promise<void> {
+      const col = db.collection("settings") as Collection<{ _id: string; until?: number }>;
+      if (untilTs == null) await col.deleteOne({ _id: "snooze" });
+      else await col.updateOne({ _id: "snooze" }, { $set: { until: untilTs } }, { upsert: true });
     },
 
     // --- hubs (LoRa gateways) --------------------------------------------

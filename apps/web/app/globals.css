@@ -144,3 +144,11 @@ h2 .seg.small { margin-right: 4px; }
 .card.hub .meta button.link { margin-left: 10px; font-size: 12px; }
 .pin.hub { background: #fff; font-size: 17px; }
 .pin.hub.offline { background: #d64545; }
+
+.snooze { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; background: var(--card); border-radius: 10px; padding: 8px 12px; margin-bottom: 12px; font-size: 13px; }
+.snooze.on { background: #f2a54133; border: 1px solid #f2a541; }
+.snooze button { font: inherit; font-size: 12px; padding: 3px 10px; border-radius: 7px; border: 1px solid var(--muted); background: var(--bg); color: var(--fg); cursor: pointer; }
+.snooze.on button { background: #f2a541; border-color: #f2a541; color: #111; font-weight: 600; }
+.snoozebtns { display: inline-flex; gap: 6px; }
+.event.snoozed { opacity: .72; }
+.badge.quiet { background: #8a8f98; margin-left: 6px; }

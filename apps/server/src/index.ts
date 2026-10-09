@@ -55,6 +55,7 @@ const api = createApp(db, {
   onZonesChanged: async () => { await monitor.reload(true); await ha.onZonesChanged(); },
   listHubs: () => hubs.list(),
   setHubLocation: (id, lat, lon) => hubs.setLocation(id, lat, lon),
+  onSnoozeChanged: () => monitor.onSnoozeChanged(),
   notifications: {
     pushoverConfigured: notifier.enabled,
     webPushConfigured: pusher.enabled,

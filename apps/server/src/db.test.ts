@@ -102,6 +102,15 @@ describe.skipIf(!hasMongo)("trackers and dogs (Mongo)", () => {
     expect(await db.updateDog("not-an-id", { name: "x" })).toBe(false);
   });
 
+  it("keeps a snooze until it runs out", async () => {
+    expect(await db.snooze(1000)).toBeNull();
+    await db.setSnooze(1600);
+    expect(await db.snooze(1000)).toBe(1600);
+    expect(await db.snooze(1700)).toBeNull();                    // expired on its own
+    await db.setSnooze(null);
+    expect(await db.snooze(1000)).toBeNull();
+  });
+
   it("removes only simulated trackers and their dogs", async () => {
     await pos("!fa000001", 1, 100);
     await pos("!aaaa0001", 2, 100);

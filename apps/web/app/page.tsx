@@ -35,6 +35,7 @@ export default function Page() {
   const [zones, setZones] = useState<Zone[]>([]);
   const [events, setEvents] = useState<DogEvent[]>([]);
   const [hubs, setHubs] = useState<Hub[]>([]);
+  const [snoozeUntil, setSnoozeUntil] = useState<number | null>(null);
   const [zoneDialog, setZoneDialog] = useState<ZoneDialogState | null>(null);
   const [draw, setDraw] = useState<DrawState | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -75,6 +76,7 @@ export default function Page() {
       setDogs(d); setTrackers(t); setZones(z); setEvents(ev); setHubs(h); setLoadError(null);
     } catch (e) { setLoadError((e as Error).message); }
     api.sim().then(setSim).catch(() => setSim(null));
+    api.snooze().then((x) => setSnoozeUntil(x.until)).catch(() => undefined);
   }, []);
 
   // Initial load, live updates via SSE (coalesced to ~1/s), and a slow poll as a safety net.
@@ -99,6 +101,11 @@ export default function Page() {
     const tick = setInterval(() => setNow(Date.now() / 1000), 15_000);
     return () => { es.close(); clearInterval(poll); clearInterval(tick); if (pending) clearTimeout(pending); };
   }, [load, loadLive]);
+
+  const snoozeMinutesLeft = snoozeUntil && snoozeUntil > now ? Math.ceil((snoozeUntil - now) / 60) : 0;
+  const setSnooze = async (minutes: number | null) => {
+    try { setSnoozeUntil((await api.setSnooze(minutes)).until); load(); } catch (e) { alert((e as Error).message); }
+  };
 
   const flyTo = (lat: number | null, lon: number | null) => {
     if (lat != null && lon != null) setFocus({ lat, lon, n: ++focusN.current });
@@ -142,6 +149,23 @@ export default function Page() {
       <aside className="side">
         <h1>🐕 Dog Tracker <button className="link gear" aria-label="Alert settings" onClick={() => setSettingsOpen(true)}>⚙ Settings</button></h1>
         {loadError && <p className="error">Can&apos;t reach the server: {loadError}</p>}
+
+        <div className={`snooze ${snoozeMinutesLeft ? "on" : ""}`}
+          title="Exit and not-reporting alerts are logged quietly while this is on. Low battery and hub outages still alert.">
+          {snoozeMinutesLeft ? (
+            <>
+              <span>🔕 Walking mode · {snoozeMinutesLeft >= 60 ? `${Math.floor(snoozeMinutesLeft / 60)} h ${snoozeMinutesLeft % 60} min` : `${snoozeMinutesLeft} min`} left</span>
+              <button onClick={() => setSnooze(null)}>End</button>
+            </>
+          ) : (
+            <>
+              <span>Walking the dogs?</span>
+              <span className="snoozebtns">
+                {[30, 60, 120].map((m) => <button key={m} onClick={() => setSnooze(m)}>{m < 60 ? `${m} min` : `${m / 60} h`}</button>)}
+              </span>
+            </>
+          )}
+        </div>
 
         {inbox.length > 0 && (
           <section className="inbox">
@@ -231,10 +255,10 @@ export default function Page() {
           <h2>Recent events</h2>
           {events.length === 0 && <p className="meta">Nothing yet. Alerts and notable changes show up here.</p>}
           {events.map((e) => (
-            <div key={e.id} className={`event ${e.alert ? "alert" : ""}`}
+            <div key={e.id} className={`event ${e.alert ? "alert" : ""} ${e.snoozed ? "snoozed" : ""}`}
               onClick={() => flyTo(e.lat ?? null, e.lon ?? null)}>
               <span className="ico">{EVENT_ICON[e.type]}</span>
-              <span className="msg">{e.message}{e.sim && <span className="badge">sim</span>}</span>
+              <span className="msg">{e.message}{e.snoozed && <span className="badge quiet" title="Walking mode was on, so this didn't alert">snoozed</span>}{e.sim && <span className="badge">sim</span>}</span>
               <span className="when">{ago(e.ts, now)}</span>
             </div>
           ))}

@@ -23,10 +23,12 @@ export type AlertOn = "exit" | "enter" | "both" | "none";
 export interface Zone {
   id: string; name: string; color: string; ring: [number, number][]; alertOn: AlertOn; home: boolean; dogs: string[] | null;
 }
-export type EventType = "zone_exit" | "zone_enter" | "silent" | "reporting" | "low_battery" | "battery_ok" | "hub_offline" | "hub_online";
+export type EventType = "zone_exit" | "zone_enter" | "silent" | "reporting" | "low_battery" | "battery_ok" | "hub_offline" | "hub_online" | "snooze_ended";
 export interface DogEvent {
   id: string; ts: number; type: EventType; dogId: string; dogName: string; zoneId?: string; zoneName?: string;
   lat?: number | null; lon?: number | null; alert: boolean; message: string; sim?: boolean;
+  /** Would have alerted, but walking mode was on. */
+  snoozed?: boolean;
 }
 export interface Settings {
   staleMinutes: number; lowBatteryPct: number; fenceMarginM: number; hubSilentMinutes: number; pushoverEnabled: boolean;
@@ -50,7 +52,7 @@ export interface DrawState { mode: "polygon" | "circle"; points: [number, number
 
 export const EVENT_ICON: Record<EventType, string> = {
   zone_exit: "🚪", zone_enter: "📍", silent: "📡", reporting: "✅", low_battery: "🪫", battery_ok: "🔋",
-  hub_offline: "🔌", hub_online: "🛰️",
+  hub_offline: "🔌", hub_online: "🛰️", snooze_ended: "⏰",
 };
 export const ALERT_LABEL: Record<AlertOn, string> = {
   exit: "Alert when a dog leaves", enter: "Alert when a dog enters", both: "Alert on both", none: "Log only, no alerts",
