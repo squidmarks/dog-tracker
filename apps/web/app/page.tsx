@@ -167,12 +167,14 @@ export default function Page() {
         <section>
           <h2>Dogs <span className="count">{dogs.length}</span>
             <span className="grow" />
-            <span className="seg small" role="group" aria-label="Activity period">
+            <button className="link" onClick={() => setDialog({})}>+ Add</button></h2>
+          {dogs.length > 0 && (
+            <div className="seg period" role="group" aria-label="Activity period">
               {(Object.keys(STATS_PERIODS) as StatsPeriod[]).map((p) => (
                 <button key={p} className={period === p ? "on" : ""} onClick={() => setPeriod(p)}>{STATS_PERIODS[p]}</button>
               ))}
-            </span>
-            <button className="link" onClick={() => setDialog({})}>+ Add</button></h2>
+            </div>
+          )}
           {dogs.length === 0 && (
             <p className="meta">{inbox.length ? "Create a dog for a new tracker above." : "No dogs yet. Switch on a tracker, or add a dog and link it later."}</p>
           )}
