@@ -50,7 +50,9 @@ setInterval(() => monitor.tick().catch((e) => console.error("[monitor]", e)), 30
 setInterval(() => hubs.tick().catch((e) => console.error("[hubs]", e)), 15_000).unref();
 
 const api = createApp(db, {
-  onDogChanged: ha.onDogChanged,
+  // A new or re-linked dog needs its in/out-of-zone state worked out from its last known position straight away,
+  // not only after its next report (otherwise the in-yard sensors read "unknown" until it moves).
+  onDogChanged: async (id) => { await monitor.reload(); await ha.onDogChanged(id); },
   onDogDeleted: ha.onDogDeleted,
   onZonesChanged: async () => { await monitor.reload(true); await ha.onZonesChanged(); },
   listHubs: () => hubs.list(),
