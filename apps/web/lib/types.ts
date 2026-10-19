@@ -31,7 +31,7 @@ export interface DogEvent {
   snoozed?: boolean;
 }
 export interface Settings {
-  staleMinutes: number; lowBatteryPct: number; fenceMarginM: number; hubSilentMinutes: number;
+  staleMinutes: number; lowBatteryPct: number; fenceMarginM: number; fenceFastExitM: number; fenceEnterMarginM: number; hubSilentMinutes: number;
   beepIntervalS: number; beepMaxMinutes: number; pushoverEnabled: boolean;
 }
 export interface Hub {

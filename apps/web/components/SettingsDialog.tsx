@@ -13,7 +13,7 @@ const SUPPORT_NOTE: Record<Exclude<PushSupport, "ok">, string> = {
 
 export function SettingsDialog({ open, onClose, units, onUnits }: { open: boolean; onClose: () => void; units: Units; onUnits: (u: Units) => void }) {
   const ref = useRef<HTMLDialogElement>(null);
-  const [form, setForm] = useState<Settings>({ staleMinutes: 20, lowBatteryPct: 20, fenceMarginM: 5, hubSilentMinutes: 45, beepIntervalS: 30, beepMaxMinutes: 10, pushoverEnabled: true });
+  const [form, setForm] = useState<Settings>({ staleMinutes: 20, lowBatteryPct: 20, fenceMarginM: 5, fenceFastExitM: 8, fenceEnterMarginM: 3, hubSilentMinutes: 45, beepIntervalS: 30, beepMaxMinutes: 10, pushoverEnabled: true });
   const [notes, setNotes] = useState<Notifications | null>(null);
   const [mine, setMine] = useState<string | null>(null);        // this device's push endpoint, when subscribed
   const [support, setSupport] = useState<PushSupport>("ok");
@@ -44,7 +44,7 @@ export function SettingsDialog({ open, onClose, units, onUnits }: { open: boolea
     finally { setBusy(false); }
   };
 
-  const num = (k: "staleMinutes" | "lowBatteryPct" | "fenceMarginM" | "hubSilentMinutes" | "beepIntervalS" | "beepMaxMinutes") => (
+  const num = (k: "staleMinutes" | "lowBatteryPct" | "fenceMarginM" | "fenceFastExitM" | "fenceEnterMarginM" | "hubSilentMinutes" | "beepIntervalS" | "beepMaxMinutes") => (
     <input type="number" min={0} step="any" value={form[k]} onChange={(e) => setForm({ ...form, [k]: Number(e.target.value) })} />
   );
   const save = async (e: React.FormEvent) => {
@@ -73,8 +73,10 @@ export function SettingsDialog({ open, onClose, units, onUnits }: { open: boolea
         <label>Low battery at (%){num("lowBatteryPct")}</label>
         <label>Hub offline if silent for (minutes){num("hubSilentMinutes")}</label>
         <p className="hint">Backstop only: normally a hub is flagged offline about a minute after it drops off the network.</p>
-        <label>Fence margin (metres){num("fenceMarginM")}</label>
-        <p className="hint">A dog must be this far past a zone edge, on two readings in a row, before it counts as in or out.</p>
+        <label>Leave: confirm past edge (metres){num("fenceMarginM")}</label>
+        <label>Leave: instant past edge (metres){num("fenceFastExitM")}</label>
+        <label>Back: inside by (metres){num("fenceEnterMarginM")}</label>
+        <p className="hint">Leaving: a dog counts as out after two readings in a row past the first distance, or one reading past the second. Coming back: one reading this far inside the edge is enough. GPS wanders 10 m or so, so keep these above that for a quiet fence.</p>
 
         <h3>Collar beeps</h3>
         <label>Beep every (seconds){num("beepIntervalS")}</label>

@@ -35,8 +35,10 @@ export class Beeper {
         if (now - s.since > settings.beepMaxMinutes * 60) continue;        // reached the cap: quiet until it comes back
         if (now - s.lastBeepAt < settings.beepIntervalS) continue;
         s.lastBeepAt = now; s.beeps++;
-        const r = await this.send(dog.tracker!);
-        this.log(`[beeper] ${dog.name}: beep ${s.beeps} ${r.sent ? (r.acked ? "(acknowledged)" : "(no receipt)") : `FAILED: ${r.error}`}`);
+        // The tag's radio is asleep between listens, so a first try often goes unheard: retry quickly until it acks.
+        let r = await this.send(dog.tracker!), tries = 1;
+        while (r.sent && !r.acked && tries < 3) { r = await this.send(dog.tracker!); tries++; }
+        this.log(`[beeper] ${dog.name}: beep ${s.beeps} ${r.sent ? (r.acked ? `(acknowledged${tries > 1 ? `, try ${tries}` : ""})` : `(no receipt after ${tries})`) : `FAILED: ${r.error}`}`);
       }
     } finally { this.running = false; }
   }

@@ -65,7 +65,9 @@ export interface DogEvent {
 }
 
 export interface Settings {
-  staleMinutes: number; lowBatteryPct: number; fenceMarginM: number;
+  staleMinutes: number; lowBatteryPct: number;
+  /** Leaving a zone: how far past the edge a fix must be, and (fenceFastExitM) how far for ONE fix to be enough. Coming back: how far inside. */
+  fenceMarginM: number; fenceFastExitM: number; fenceEnterMarginM: number;
   /** Fallback only: a hub that is silent this long without a broker disconnect is treated as offline. */
   hubSilentMinutes: number;
   /** While a dog with beeping on is outside its zone: send a beep to its collar this often (seconds), and stop after this many minutes. */
@@ -73,8 +75,8 @@ export interface Settings {
   /** Deliver alerts through Pushover (needs PUSHOVER_TOKEN/USER on the server). Web Push is per device. */
   pushoverEnabled: boolean;
 }
-export const DEFAULT_SETTINGS: Settings = { staleMinutes: 20, lowBatteryPct: 20, fenceMarginM: 5, hubSilentMinutes: 45, beepIntervalS: 30, beepMaxMinutes: 10, pushoverEnabled: true };
-const NUMERIC_SETTINGS = ["staleMinutes", "lowBatteryPct", "fenceMarginM", "hubSilentMinutes", "beepIntervalS", "beepMaxMinutes"] as const;
+export const DEFAULT_SETTINGS: Settings = { staleMinutes: 20, lowBatteryPct: 20, fenceMarginM: 5, fenceFastExitM: 8, fenceEnterMarginM: 3, hubSilentMinutes: 45, beepIntervalS: 30, beepMaxMinutes: 10, pushoverEnabled: true };
+const NUMERIC_SETTINGS = ["staleMinutes", "lowBatteryPct", "fenceMarginM", "fenceFastExitM", "fenceEnterMarginM", "hubSilentMinutes", "beepIntervalS", "beepMaxMinutes"] as const;
 
 export type HubStatus = "online" | "offline";
 export interface HubDoc {

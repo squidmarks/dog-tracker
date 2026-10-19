@@ -48,20 +48,44 @@ export function signedDistanceM(lat: number, lon: number, ring: Ring): number {
   return pointInRing(lat, lon, ring) ? -min : min;
 }
 
-/** Per-(dog, zone) membership with hysteresis and debounce, so GPS jitter at a fence line doesn't raise alerts.
- *  A flip needs the point to be `marginM` past the boundary on `confirm` consecutive fixes. */
+export interface FenceRules {
+  /** Leaving: a fix this far past the edge counts, but must repeat `exitConfirm` times in a row. */
+  exitMarginM: number; exitConfirm: number;
+  /** Leaving: ONE fix this far past the edge is enough (a dog 15 m outside isn't GPS noise). */
+  fastExitM: number;
+  /** Coming back: a fix this far inside the edge counts (so one is enough; indoor GPS rarely gives two). */
+  enterMarginM: number; enterConfirm: number;
+}
+export const DEFAULT_FENCE: FenceRules = { exitMarginM: 5, exitConfirm: 2, fastExitM: 8, enterMarginM: 3, enterConfirm: 1 };
+
+/**
+ * Per-(dog, zone) membership. It's deliberately lopsided: it takes real evidence to say a dog has LEFT (consumer GPS
+ * wanders 10 m or more, and a false alarm is annoying), but only a little to say it's BACK (so alerts and collar beeps
+ * stop promptly, even when the GPS is poor near the fence or indoors).
+ */
 export class Membership {
   private state = new Map<string, { inside: boolean; streak: number }>();
-  constructor(private marginM = 5, private confirm = 2) {}
+  private rules: FenceRules;
+  constructor(rules: Partial<FenceRules> = {}) { this.rules = { ...DEFAULT_FENCE, ...rules }; }
 
   /** Returns "enter" / "exit" on a confirmed transition, otherwise null. The first fix only seeds the state. */
   update(key: string, lat: number, lon: number, ring: Ring): "enter" | "exit" | null {
     const d = signedDistanceM(lat, lon, ring);
     const s = this.state.get(key);
     if (!s) { this.state.set(key, { inside: d <= 0, streak: 0 }); return null; }
-    const wantsFlip = s.inside ? d > this.marginM : d < -this.marginM;
-    if (!wantsFlip) { s.streak = 0; return null; }
-    if (++s.streak < this.confirm) return null;
+    const r = this.rules;
+    if (s.inside) {
+      if (d > r.fastExitM) { s.inside = false; s.streak = 0; return "exit"; }
+    }
+    return this.step(s, d);
+  }
+
+  private step(s: { inside: boolean; streak: number }, d: number): "enter" | "exit" | null {
+    const r = this.rules;
+    const [margin, confirm] = s.inside ? [r.exitMarginM, r.exitConfirm] : [r.enterMarginM, r.enterConfirm];
+    const crossed = s.inside ? d > margin : d < -margin;
+    if (!crossed) { s.streak = 0; return null; }
+    if (++s.streak < confirm) return null;
     s.inside = !s.inside;
     s.streak = 0;
     return s.inside ? "enter" : "exit";

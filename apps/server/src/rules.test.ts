@@ -26,11 +26,11 @@ describe.skipIf(!hasMongo)("Monitor (Mongo)", () => {
   afterEach(async () => { await db.close(); });
 
   it("raises an alert when the dog leaves a zone, and a quiet event when it returns", async () => {
-    await fix(2, 60); expect(events).toHaveLength(0);                      // first fix outside: debounce
-    await fix(3, 65);
+    await fix(2, 60);                                                      // far outside: one fix is enough
     expect(events).toHaveLength(1);
+    await fix(3, 65); expect(events).toHaveLength(1);                      // already out: no repeat
     expect(events[0]).toMatchObject({ type: "zone_exit", zoneName: "Yard", dogName: "Ozzie", alert: true, message: "Ozzie left Yard" });
-    await fix(4, 20); await fix(5, 18);
+    await fix(4, 20);
     expect(events[1]).toMatchObject({ type: "zone_enter", alert: false });  // alertOn=exit: entering is logged, not alerted
     expect(await db.events()).toHaveLength(2);
     expect(monitor.isInside(dogId, (await db.zones())[0].id)).toBe(true);

@@ -18,7 +18,7 @@ export class Monitor {
   private membership = new Membership();
   private zones: Zone[] = [];
   private flags = new Map<string, { silent: boolean; lowBattery: boolean }>();
-  private lastMargin = -1;
+  private lastRules = "";
   /** Whether walking mode was on at the last look, so we notice the moment it ends. */
   private wasSnoozed = false;
   /** A walk nobody leaves for is cancelled after this long (you started it, then changed your mind). */
@@ -31,8 +31,10 @@ export class Monitor {
   async reload(reseed = false) {
     const [zones, settings] = await Promise.all([this.db.zones(), this.db.settings()]);
     this.zones = zones;
-    const reset = reseed || settings.fenceMarginM !== this.lastMargin;
-    if (reset) { this.membership = new Membership(settings.fenceMarginM); this.lastMargin = settings.fenceMarginM; }
+    const rules = { exitMarginM: settings.fenceMarginM, fastExitM: settings.fenceFastExitM, enterMarginM: settings.fenceEnterMarginM };
+    const key = JSON.stringify(rules);
+    const reset = reseed || key !== this.lastRules;
+    if (reset) { this.membership = new Membership(rules); this.lastRules = key; }
     // Seed every (dog, zone) we have no state for from the dog's last known position, without raising events.
     for (const d of (await this.db.dogs()) as unknown as LiveDog[]) {
       if (d.lat == null || d.lon == null) continue;

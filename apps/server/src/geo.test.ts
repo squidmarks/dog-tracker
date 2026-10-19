@@ -31,7 +31,7 @@ describe("geometry", () => {
   });
 });
 
-describe("Membership hysteresis", () => {
+describe("Membership", () => {
   const ring = circleRing(C.lat, C.lon, 40);
   const fix = (m: Membership, metresNorth: number) => m.update("d:z", north(metresNorth), C.lon, ring);
 
@@ -41,29 +41,49 @@ describe("Membership hysteresis", () => {
     expect(m.isInside("d:z")).toBe(false);
   });
 
-  it("needs two confirmed fixes past the margin to exit", () => {
-    const m = new Membership(5, 2);
+  it("leaving needs two fixes past the margin, or one fix far past the edge", () => {
+    const m = new Membership({ exitMargin: 5 } as never);       // (legacy key ignored) defaults: margin 5, fast 8
     fix(m, 10);
-    expect(fix(m, 44)).toBeNull();          // outside the fence but inside the 5 m margin: nothing
-    expect(fix(m, 50)).toBeNull();          // first confirmed fix
-    expect(fix(m, 52)).toBe("exit");        // second: event
-    expect(m.isInside("d:z")).toBe(false);
+    expect(fix(m, 44)).toBeNull();                              // 4 m past the 40 m fence: inside the 5 m margin
+    expect(fix(m, 46.5)).toBeNull();                            // 6.5 m past: first confirmed fix
+    expect(fix(m, 47)).toBe("exit");                            // second in a row
+    const m2 = new Membership();
+    fix(m2, 10);
+    expect(fix(m2, 52)).toBe("exit");                           // 12 m past the fence: one fix is enough
+    expect(m2.isInside("d:z")).toBe(false);
   });
 
-  it("a single GPS spike does not raise an exit", () => {
-    const m = new Membership(5, 2);
+  it("a single spike just past the margin does not raise an exit, and a spike resets the count", () => {
+    const m = new Membership();
     fix(m, 10);
-    expect(fix(m, 80)).toBeNull();          // spike
-    expect(fix(m, 12)).toBeNull();          // back in: streak reset
-    expect(fix(m, 80)).toBeNull();
+    expect(fix(m, 46)).toBeNull();
+    expect(fix(m, 12)).toBeNull();                              // back in: streak reset
+    expect(fix(m, 46)).toBeNull();
     expect(m.isInside("d:z")).toBe(true);
   });
 
-  it("raises enter when a dog comes back well inside", () => {
-    const m = new Membership(5, 2);
+  it("coming back counts after ONE fix inside, so indoor GPS wobble near the fence still ends an episode", () => {
+    const m = new Membership();
     fix(m, 100);
-    expect(fix(m, 38)).toBeNull();          // just inside the fence, within the margin: still outside
-    expect(fix(m, 20)).toBeNull();
-    expect(fix(m, 18)).toBe("enter");
+    expect(fix(m, 41)).toBeNull();                              // just inside the fence, within the 3 m margin: still out
+    expect(fix(m, 30)).toBe("enter");                           // 10 m inside: one fix
+    expect(m.isInside("d:z")).toBe(true);
+  });
+
+  it("honours custom rules", () => {
+    const m = new Membership({ fastExitM: 20, exitMarginM: 10, exitConfirm: 3, enterMarginM: 8 });
+    fix(m, 10);
+    expect(fix(m, 55)).toBeNull();                              // 15 m past: not far enough for the fast path
+    expect(fix(m, 55)).toBeNull();
+    expect(fix(m, 55)).toBe("exit");                            // third in a row
+    expect(fix(m, 36)).toBeNull();                              // 4 m inside: under the 8 m re-entry margin
+    expect(fix(m, 30)).toBe("enter");
+  });
+
+  it("forgets a dog's zones", () => {
+    const m = new Membership();
+    fix(m, 10);
+    m.forget("d:");
+    expect(m.has("d:z")).toBe(false);
   });
 });

@@ -188,7 +188,7 @@ describe.skipIf(!hasMongo)("zones, events and settings API (Mongo)", () => {
   });
 
   it("reads and updates alert settings", async () => {
-    expect((await call("GET", "/api/settings")).body).toEqual({ staleMinutes: 20, lowBatteryPct: 20, fenceMarginM: 5, hubSilentMinutes: 45, beepIntervalS: 30, beepMaxMinutes: 10, pushoverEnabled: true });
+    expect((await call("GET", "/api/settings")).body).toEqual({ staleMinutes: 20, lowBatteryPct: 20, fenceMarginM: 5, fenceFastExitM: 8, fenceEnterMarginM: 3, hubSilentMinutes: 45, beepIntervalS: 30, beepMaxMinutes: 10, pushoverEnabled: true });
     expect((await call("PUT", "/api/settings", { staleMinutes: 45 })).body.staleMinutes).toBe(45);
     expect((await call("PUT", "/api/settings", { staleMinutes: -3 })).status).toBe(400);
     expect((await call("PUT", "/api/settings", { pushoverEnabled: false })).body.pushoverEnabled).toBe(false);
