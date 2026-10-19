@@ -19,6 +19,7 @@ export interface Hooks {
   listHubs: () => Promise<Hub[]>;
   setHubLocation: (id: string, lat: number | null, lon: number | null) => Promise<boolean>;
   onSnoozeChanged: () => unknown;
+  health: () => { connected: boolean; subscribedAt: number | null; lastMessageAt: number | null; lastPacketAt: number | null };
   notifications: {
     pushoverConfigured: boolean;
     webPushConfigured: boolean;
@@ -153,6 +154,15 @@ export function createApp(db: Db, hooks: Hooks) {
     const w = windowOf(req, 48);
     if (!w) return badRange(res);
     res.json(decimate(await db.dogTelemetry(req.params.id, w.from, w.to), 600));
+  });
+
+  // --- Health: is the radio feed actually flowing? ---
+  app.get("/api/health", (_req, res) => {
+    const nowS = Math.floor(Date.now() / 1000);
+    res.json({
+      ...hooks.health(),
+      packetAgeS: hooks.health().lastPacketAt ? nowS - hooks.health().lastPacketAt! : null,
+    });
   });
 
   // --- Zones ---

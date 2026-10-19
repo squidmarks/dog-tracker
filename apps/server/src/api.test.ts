@@ -8,6 +8,7 @@ let db: Db, base: string, close: () => void;
 const hooks = { onDogChanged: vi.fn(), onDogDeleted: vi.fn(), onZonesChanged: vi.fn(), listHubs: async () => [],
   setHubLocation: async (id: string) => id === "!hub00001",
   onSnoozeChanged: vi.fn(),
+  health: () => ({ connected: true, subscribedAt: 100, lastMessageAt: 200, lastPacketAt: 150 }),
   notifications: { pushoverConfigured: true, webPushConfigured: true, vapidPublicKey: "PUBKEY", testPushover: async () => true, testWebPush: async (e: string) => e === "https://push.example/ok" },
   getSim: () => null };
 const call = async (method: string, path: string, body?: unknown) => {
@@ -109,6 +110,12 @@ describe.skipIf(!hasMongo)("dogs API (Mongo)", () => {
     expect(hours).toBeLessThanOrEqual(6);
     expect((await call("GET", "/api/snooze")).body).toMatchObject({ active: true, mode: "return" });
     expect((await call("PUT", "/api/snooze", { minutes: null })).body).toMatchObject({ active: false, mode: null });
+  });
+
+  it("reports whether the radio feed is subscribed and flowing", async () => {
+    const h = (await call("GET", "/api/health")).body;
+    expect(h).toMatchObject({ connected: true, subscribedAt: 100, lastPacketAt: 150 });
+    expect(h.packetAgeS).toBeGreaterThan(0);
   });
 
   it("places a hub on the map and validates the request", async () => {

@@ -1,6 +1,7 @@
 import type { MqttClient } from "mqtt";
 import { config } from "./config.js";
 import type { Db, DogEvent, Zone } from "./db.js";
+import { onConnect } from "./ingest.js";
 import type { Hub } from "./hubs.js";
 import type { Monitor } from "./rules.js";
 import { computeStats, type Stats } from "./stats.js";
@@ -184,7 +185,7 @@ export function startHa(client: MqttClient, db: Db, monitor: Monitor, listHubs: 
     published.delete(id);
   };
 
-  client.on("connect", () => {
+  onConnect(client, () => {
     pub(STATUS_TOPIC, "online");
     client.subscribe("homeassistant/status");
     void syncAll(true);

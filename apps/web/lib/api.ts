@@ -34,6 +34,7 @@ export const api = {
   /** Quiet the exit/silence alerts until every dog is back home (capped at 6 h by the server). */
   startWalk: () => send("PUT", "/api/snooze", { untilBack: true }).then((r) => json<WalkState>(r)),
   endWalk: () => send("PUT", "/api/snooze", { minutes: null }).then((r) => json<WalkState>(r)),
+  health: () => fetch("/api/health").then((r) => json<{ connected: boolean; subscribedAt: number | null; lastPacketAt: number | null; packetAgeS: number | null }>(r)),
   hubs: () => fetch("/api/hubs").then((r) => json<Hub[]>(r)),
   notifications: () => fetch("/api/notifications").then((r) => json<Notifications>(r)),
   subscribePush: (subscription: PushSubscriptionJSON, label: string) =>

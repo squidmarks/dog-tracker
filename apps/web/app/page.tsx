@@ -35,6 +35,7 @@ export default function Page() {
   const [zones, setZones] = useState<Zone[]>([]);
   const [events, setEvents] = useState<DogEvent[]>([]);
   const [hubs, setHubs] = useState<Hub[]>([]);
+  const [feed, setFeed] = useState<{ connected: boolean; subscribedAt: number | null; lastPacketAt: number | null } | null>(null);
   const [walk, setWalk] = useState<WalkState>({ active: false, until: null, mode: null, armed: false });
   const [zoneDialog, setZoneDialog] = useState<ZoneDialogState | null>(null);
   const [draw, setDraw] = useState<DrawState | null>(null);
@@ -77,6 +78,7 @@ export default function Page() {
     } catch (e) { setLoadError((e as Error).message); }
     api.sim().then(setSim).catch(() => setSim(null));
     api.walk().then(setWalk).catch(() => undefined);
+    api.health().then(setFeed).catch(() => setFeed(null));
   }, []);
 
   // Initial load, live updates via SSE (coalesced to ~1/s), and a slow poll as a safety net.
@@ -267,6 +269,11 @@ export default function Page() {
         {hubs.length > 0 && (
           <section>
             <h2>LoRa hubs <span className="count">{hubs.length}</span></h2>
+            <div className={`feed ${feed && feed.connected && feed.subscribedAt ? "" : "bad"}`}>
+              {feed && feed.connected && feed.subscribedAt
+                ? `Radio feed: connected${feed.lastPacketAt ? ` · last packet ${ago(feed.lastPacketAt, now)}` : " · no packets yet"}`
+                : "Radio feed: NOT connected. The server isn't receiving data from the hub."}
+            </div>
             {hubs.map((h) => (
               <div key={h.id} className="card hub">
                 <b><span className={`status ${h.status}`} />{h.name}{h.mobile && <span className="badge" title="A collar relayed through a phone">phone</span>}</b>

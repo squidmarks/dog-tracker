@@ -154,3 +154,6 @@ h2 .seg.small { margin-right: 4px; }
 .badge.quiet { background: #8a8f98; margin-left: 6px; }
 
 .snooze button.startwalk { background: #2e86ab; border-color: #2e86ab; color: #fff; font-weight: 600; padding: 4px 14px; }
+
+.feed { font-size: 12px; color: var(--muted); margin: -2px 0 8px; }
+.feed.bad { color: #d64545; font-weight: 600; }

@@ -5,7 +5,7 @@ import type { MeshEvent } from "./decode.js";
 import { circleRing } from "./geo.js";
 import { startHa } from "./ha.js";
 import { HubMonitor } from "./hubs.js";
-import { createClient, startIngest } from "./ingest.js";
+import { createClient, ingestHealth, startIngest } from "./ingest.js";
 import { createNotifier } from "./notify.js";
 import { createPusher } from "./push.js";
 import { serial } from "./queue.js";
@@ -56,6 +56,7 @@ const api = createApp(db, {
   listHubs: () => hubs.list(),
   setHubLocation: (id, lat, lon) => hubs.setLocation(id, lat, lon),
   onSnoozeChanged: () => monitor.onSnoozeChanged(),
+  health: () => ingestHealth,
   notifications: {
     pushoverConfigured: notifier.enabled,
     webPushConfigured: pusher.enabled,
