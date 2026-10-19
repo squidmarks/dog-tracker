@@ -15,6 +15,8 @@ export interface DogInput {
   tracker?: string | null;
   /** Send alerts (push + toast) for this dog. Default true; false keeps events in the timeline but quiet. */
   alerts?: boolean;
+  /** Make this dog's collar beep while it is outside an alerting zone. Default false. */
+  beep?: boolean;
 }
 
 /** A dog with its tracker's live state (see dogs()). */
@@ -31,7 +33,7 @@ interface PositionDoc {
   alt: number | null; speed: number | null; sats: number | null; gateway: string | null; rssi: number | null; snr: number | null;
   heading?: number | null; hdop?: number | null;
 }
-interface DogDoc { _id: ObjectId; name: string; color: string | null; emoji: string | null; breed: string | null; notes: string | null; alerts?: boolean; created_at: number }
+interface DogDoc { _id: ObjectId; name: string; color: string | null; emoji: string | null; breed: string | null; notes: string | null; alerts?: boolean; beep?: boolean; created_at: number }
 /** Assignment history: a dog's track is the positions of whichever tracker it carried at the time.
  *  `open: true` marks the current assignment (and is unset on close) so partial unique indexes can enforce
  *  "one dog per tracker, one tracker per dog". */
@@ -66,11 +68,13 @@ export interface Settings {
   staleMinutes: number; lowBatteryPct: number; fenceMarginM: number;
   /** Fallback only: a hub that is silent this long without a broker disconnect is treated as offline. */
   hubSilentMinutes: number;
+  /** While a dog with beeping on is outside its zone: send a beep to its collar this often (seconds), and stop after this many minutes. */
+  beepIntervalS: number; beepMaxMinutes: number;
   /** Deliver alerts through Pushover (needs PUSHOVER_TOKEN/USER on the server). Web Push is per device. */
   pushoverEnabled: boolean;
 }
-export const DEFAULT_SETTINGS: Settings = { staleMinutes: 20, lowBatteryPct: 20, fenceMarginM: 5, hubSilentMinutes: 45, pushoverEnabled: true };
-const NUMERIC_SETTINGS = ["staleMinutes", "lowBatteryPct", "fenceMarginM", "hubSilentMinutes"] as const;
+export const DEFAULT_SETTINGS: Settings = { staleMinutes: 20, lowBatteryPct: 20, fenceMarginM: 5, hubSilentMinutes: 45, beepIntervalS: 30, beepMaxMinutes: 10, pushoverEnabled: true };
+const NUMERIC_SETTINGS = ["staleMinutes", "lowBatteryPct", "fenceMarginM", "hubSilentMinutes", "beepIntervalS", "beepMaxMinutes"] as const;
 
 export type HubStatus = "online" | "offline";
 export interface HubDoc {
@@ -231,7 +235,7 @@ export async function openDb(url: string, dbName: string) {
         const node = open.find((a) => a.dogId.equals(d._id))?.node ?? null;
         const [n, p] = node ? await Promise.all([nodes.findOne({ _id: node }), latestPosition(node)]) : [null, null];
         return { id: String(d._id), name: d.name, color: d.color, emoji: d.emoji, breed: d.breed, notes: d.notes,
-          alerts: d.alerts !== false, created_at: d.created_at, tracker: node, ...liveFields(n, p) };
+          alerts: d.alerts !== false, beep: d.beep === true, created_at: d.created_at, tracker: node, ...liveFields(n, p) };
       }));
     },
     async dog(id: string): Promise<DogLive | undefined> {
@@ -242,7 +246,7 @@ export async function openDb(url: string, dbName: string) {
       if (!name) throw new Error("A dog needs a name");
       const { insertedId } = await dogsCol.insertOne({
         _id: new ObjectId(), name, color: input.color ?? null, emoji: input.emoji ?? null,
-        breed: input.breed ?? null, notes: input.notes ?? null, alerts: input.alerts !== false, created_at: at,
+        breed: input.breed ?? null, notes: input.notes ?? null, alerts: input.alerts !== false, beep: input.beep === true, created_at: at,
       });
       if (input.tracker) {
         try { await assign(insertedId, input.tracker, at); }
@@ -262,6 +266,7 @@ export async function openDb(url: string, dbName: string) {
         set[f] = typeof v === "string" ? v.trim() : v;
       }
       if ("alerts" in input) set.alerts = input.alerts !== false;
+      if ("beep" in input) set.beep = input.beep === true;
       // Tracker first: if it fails (already claimed), nothing else has changed.
       if ("tracker" in input) { if (input.tracker) await assign(_id, input.tracker, at); else await unassign(_id, at); }
       if (Object.keys(set).length) await dogsCol.updateOne({ _id }, { $set: set });

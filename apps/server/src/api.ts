@@ -19,6 +19,9 @@ export interface Hooks {
   listHubs: () => Promise<Hub[]>;
   setHubLocation: (id: string, lat: number | null, lon: number | null) => Promise<boolean>;
   onSnoozeChanged: () => unknown;
+  /** Send one test beep to the dog's collar; null when beeping isn't configured (no hub address). */
+  beepDog: (dogId: string) => Promise<{ sent: boolean; acked: boolean; error?: string }> | null;
+  beeperEnabled: () => boolean;
   health: () => { connected: boolean; subscribedAt: number | null; lastMessageAt: number | null; lastPacketAt: number | null };
   notifications: {
     pushoverConfigured: boolean;
@@ -33,7 +36,7 @@ export interface Hooks {
 /** Accept only the editable dog fields from a request body. */
 function dogInput(body: Record<string, unknown> | undefined): DogInput {
   const out: DogInput = {};
-  for (const k of ["name", "color", "emoji", "breed", "notes", "tracker", "alerts"] as const) {
+  for (const k of ["name", "color", "emoji", "breed", "notes", "tracker", "alerts", "beep"] as const) {
     if (body && k in body) (out as Record<string, unknown>)[k] = body[k] === "" ? null : body[k];
   }
   if (out.name === null) out.name = "";
@@ -106,6 +109,15 @@ export function createApp(db: Db, hooks: Hooks) {
   };
   const badRange = (res: express.Response) => res.status(400).json({ error: "bad time range" });
 
+  // Make a dog's collar beep once, right now (a test of the buzzer and the radio path).
+  app.post("/api/dogs/:id/beep", async (req, res) => {
+    const pending = hooks.beepDog(req.params.id);
+    if (!pending) return res.status(503).json({ error: "Collar beeping isn't set up on the server (HUB_HOST)" });
+    const r = await pending;
+    if (r.error === "unknown dog") return res.status(404).json(r);
+    r.sent ? res.json(r) : res.status(502).json(r);
+  });
+
   // Track for a window, capped at 31 days and thinned to MAX_TRACK_POINTS so a week-long view doesn't ship
   // thousands of points per dog.
   app.get("/api/dogs/:id/track", async (req, res) => {
@@ -161,6 +173,7 @@ export function createApp(db: Db, hooks: Hooks) {
     const nowS = Math.floor(Date.now() / 1000);
     res.json({
       ...hooks.health(),
+      beeper: hooks.beeperEnabled(),
       packetAgeS: hooks.health().lastPacketAt ? nowS - hooks.health().lastPacketAt! : null,
     });
   });

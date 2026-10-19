@@ -8,6 +8,8 @@ let db: Db, base: string, close: () => void;
 const hooks = { onDogChanged: vi.fn(), onDogDeleted: vi.fn(), onZonesChanged: vi.fn(), listHubs: async () => [],
   setHubLocation: async (id: string) => id === "!hub00001",
   onSnoozeChanged: vi.fn(),
+  beepDog: vi.fn(),
+  beeperEnabled: () => true,
   health: () => ({ connected: true, subscribedAt: 100, lastMessageAt: 200, lastPacketAt: 150 }),
   notifications: { pushoverConfigured: true, webPushConfigured: true, vapidPublicKey: "PUBKEY", testPushover: async () => true, testWebPush: async (e: string) => e === "https://push.example/ok" },
   getSim: () => null };
@@ -118,6 +120,22 @@ describe.skipIf(!hasMongo)("dogs API (Mongo)", () => {
     expect(h.packetAgeS).toBeGreaterThan(0);
   });
 
+  it("beeps a collar on request, and explains each way it can fail", async () => {
+    const { body: dog } = await call("POST", "/api/dogs", { name: "Ozzie", tracker: "!aaaa0001", beep: true });
+    expect(dog.beep).toBe(true);
+    hooks.beepDog.mockReturnValueOnce(Promise.resolve({ sent: true, acked: true }));
+    expect((await call("POST", `/api/dogs/${dog.id}/beep`)).body).toEqual({ sent: true, acked: true });
+    hooks.beepDog.mockReturnValueOnce(Promise.resolve({ sent: false, acked: false, error: "could not connect to the hub" }));
+    const down = await call("POST", `/api/dogs/${dog.id}/beep`);
+    expect(down.status).toBe(502);
+    expect(down.body.error).toMatch(/connect/);
+    hooks.beepDog.mockReturnValueOnce(Promise.resolve({ sent: false, acked: false, error: "unknown dog" }));
+    expect((await call("POST", "/api/dogs/000000000000000000000000/beep")).status).toBe(404);
+    hooks.beepDog.mockReturnValueOnce(null);
+    expect((await call("POST", `/api/dogs/${dog.id}/beep`)).status).toBe(503);
+    expect((await call("PATCH", `/api/dogs/${dog.id}`, { beep: false })).body.beep).toBe(false);
+  });
+
   it("places a hub on the map and validates the request", async () => {
     expect((await call("PATCH", "/api/hubs/!hub00001", { lat: 45.17, lon: -64.75 })).status).toBe(200);
     expect((await call("PATCH", "/api/hubs/!nobody", { lat: 45.17, lon: -64.75 })).status).toBe(404);
@@ -170,7 +188,7 @@ describe.skipIf(!hasMongo)("zones, events and settings API (Mongo)", () => {
   });
 
   it("reads and updates alert settings", async () => {
-    expect((await call("GET", "/api/settings")).body).toEqual({ staleMinutes: 20, lowBatteryPct: 20, fenceMarginM: 5, hubSilentMinutes: 45, pushoverEnabled: true });
+    expect((await call("GET", "/api/settings")).body).toEqual({ staleMinutes: 20, lowBatteryPct: 20, fenceMarginM: 5, hubSilentMinutes: 45, beepIntervalS: 30, beepMaxMinutes: 10, pushoverEnabled: true });
     expect((await call("PUT", "/api/settings", { staleMinutes: 45 })).body.staleMinutes).toBe(45);
     expect((await call("PUT", "/api/settings", { staleMinutes: -3 })).status).toBe(400);
     expect((await call("PUT", "/api/settings", { pushoverEnabled: false })).body.pushoverEnabled).toBe(false);

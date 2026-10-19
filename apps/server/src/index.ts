@@ -11,6 +11,8 @@ import { createPusher } from "./push.js";
 import { serial } from "./queue.js";
 import { Monitor } from "./rules.js";
 import { circleArea, ringArea, startSimulator } from "./sim.js";
+import { Beeper } from "./beeper.js";
+import { sendTextViaHub } from "./collar.js";
 
 const db = await openDb(config.mongoUrl, config.mongoDb);
 console.log(`[db] connected to Mongo database ${config.mongoDb}`);
@@ -49,6 +51,13 @@ await monitor.reload(true);
 setInterval(() => monitor.tick().catch((e) => console.error("[monitor]", e)), 30_000).unref();
 setInterval(() => hubs.tick().catch((e) => console.error("[hubs]", e)), 15_000).unref();
 
+// Beeping a collar needs the hub's address (its TCP API); without HUB_HOST the feature is simply off.
+const beeper = config.hubHost
+  ? new Beeper(db, monitor, (node) => sendTextViaHub({ host: config.hubHost!, port: config.hubPort, node, text: "beep" }))
+  : null;
+console.log(`[beeper] ${beeper ? `enabled via hub ${config.hubHost}:${config.hubPort}` : "disabled (set HUB_HOST)"}`);
+if (beeper) setInterval(() => beeper.tick().catch((e) => console.error("[beeper]", e)), 5_000).unref();
+
 const api = createApp(db, {
   // A new or re-linked dog needs its in/out-of-zone state worked out from its last known position straight away,
   // not only after its next report (otherwise the in-yard sensors read "unknown" until it moves).
@@ -58,6 +67,8 @@ const api = createApp(db, {
   listHubs: () => hubs.list(),
   setHubLocation: (id, lat, lon) => hubs.setLocation(id, lat, lon),
   onSnoozeChanged: () => monitor.onSnoozeChanged(),
+  beepDog: (id) => beeper?.test(id) ?? null,
+  beeperEnabled: () => !!beeper,
   health: () => ingestHealth,
   notifications: {
     pushoverConfigured: notifier.enabled,

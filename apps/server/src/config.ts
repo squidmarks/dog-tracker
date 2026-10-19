@@ -15,6 +15,9 @@ export const config = {
     ? { lat: Number(process.env.YARD_LAT), lon: Number(process.env.YARD_LON), radiusM: Number(process.env.YARD_RADIUS_M ?? 40) }
     : null,
   // Simulated dogs (dev/demo): SIM_DOGS=2 starts two. They use node ids !fa000001+.
+  // The LoRa hub's address, for sending beeps to collars through its TCP API (leave unset to switch beeping off).
+  hubHost: process.env.HUB_HOST || null,
+  hubPort: Number(process.env.HUB_PORT ?? 4403),
   simDogs: Number(process.env.SIM_DOGS ?? 0),
   simTickS: Number(process.env.SIM_TICK_S ?? 5),
   gpsAccuracyM: Number(process.env.GPS_ACCURACY_M ?? 15),

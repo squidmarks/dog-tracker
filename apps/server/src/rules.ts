@@ -45,6 +45,11 @@ export class Monitor {
   /** The zone the simulator should treat as the yard: the first "home" zone, else the first zone. */
   playRing(): [number, number][] | null { return (this.zones.find((z) => z.home) ?? this.zones[0])?.ring ?? null; }
 
+  /** The dog is confirmed outside at least one zone that alerts on exit (what "it has left the yard" means). */
+  isOutside(dogId: string): boolean {
+    return this.zonesFor(dogId).some((z) => alerts(z, "exit") && this.membership.isInside(`${dogId}:${z.id}`) === false);
+  }
+
   isInside(dogId: string, zoneId: string): boolean | undefined { return this.membership.isInside(`${dogId}:${zoneId}`); }
   zonesFor(dogId: string): Zone[] { return this.zones.filter((z) => appliesTo(z, dogId)); }
 

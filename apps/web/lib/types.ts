@@ -6,7 +6,7 @@ export interface Live {
 }
 export interface Dog extends Live {
   id: string; name: string; color: string | null; emoji: string | null; breed: string | null; notes: string | null;
-  tracker: string | null; alerts: boolean; sim?: boolean;
+  tracker: string | null; alerts: boolean; beep: boolean; sim?: boolean;
 }
 /** A radio heard on the channel. Unclaimed ones with a GPS fix are the "new trackers" inbox. */
 export interface Tracker extends Live {
@@ -31,7 +31,8 @@ export interface DogEvent {
   snoozed?: boolean;
 }
 export interface Settings {
-  staleMinutes: number; lowBatteryPct: number; fenceMarginM: number; hubSilentMinutes: number; pushoverEnabled: boolean;
+  staleMinutes: number; lowBatteryPct: number; fenceMarginM: number; hubSilentMinutes: number;
+  beepIntervalS: number; beepMaxMinutes: number; pushoverEnabled: boolean;
 }
 export interface Hub {
   id: string; name: string; status: "online" | "offline"; since: number; lastPacket: number | null;

@@ -35,7 +35,7 @@ export default function Page() {
   const [zones, setZones] = useState<Zone[]>([]);
   const [events, setEvents] = useState<DogEvent[]>([]);
   const [hubs, setHubs] = useState<Hub[]>([]);
-  const [feed, setFeed] = useState<{ connected: boolean; subscribedAt: number | null; lastPacketAt: number | null } | null>(null);
+  const [feed, setFeed] = useState<{ connected: boolean; subscribedAt: number | null; lastPacketAt: number | null; beeper: boolean } | null>(null);
   const [walk, setWalk] = useState<WalkState>({ active: false, until: null, mode: null, armed: false });
   const [zoneDialog, setZoneDialog] = useState<ZoneDialogState | null>(null);
   const [draw, setDraw] = useState<DrawState | null>(null);
@@ -212,7 +212,7 @@ export default function Page() {
               <div key={d.id} className="card dog" onClick={() => flyTo(d.lat, d.lon)}>
                 <b>
                   <span className="dot" style={{ background: dogColor(d) }}>{dogEmoji(d)}</span>
-                  {d.name}{fastest === d.id && <span title="Fastest in this period">🏆</span>}{!d.alerts && <span title="Alerts off">🔕</span>}{d.sim && <span className="badge">sim</span>}
+                  {d.name}{fastest === d.id && <span title="Fastest in this period">🏆</span>}{!d.alerts && <span title="Alerts off">🔕</span>}{d.beep && <span title="Collar beeps when outside the yard">🔔</span>}{d.sim && <span className="badge">sim</span>}
                   <button className="link edit" aria-label={`Edit ${d.name}`}
                     onClick={(e) => { e.stopPropagation(); setDialog({ dog: d }); }}>Edit</button>
                 </b>
@@ -410,7 +410,7 @@ export default function Page() {
           {toasts.map((t) => <div key={t.id} className="toast" onClick={() => setToasts((x) => x.filter((y) => y.id !== t.id))}>⚠️ {t.text}</div>)}
         </div>
       </div>
-      <DogDialog state={dialog} trackers={trackers} onClose={() => setDialog(null)} onSaved={load} />
+      <DogDialog state={dialog} trackers={trackers} beeper={!!feed?.beeper} onClose={() => setDialog(null)} onSaved={load} />
       <ZoneDialog state={zoneDialog} dogs={dogs} onClose={() => setZoneDialog(null)} onSaved={load}
         onRedraw={(z) => startDraw("polygon", z)} />
       <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} units={units} onUnits={chooseUnits} />

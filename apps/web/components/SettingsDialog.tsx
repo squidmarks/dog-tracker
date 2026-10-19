@@ -13,7 +13,7 @@ const SUPPORT_NOTE: Record<Exclude<PushSupport, "ok">, string> = {
 
 export function SettingsDialog({ open, onClose, units, onUnits }: { open: boolean; onClose: () => void; units: Units; onUnits: (u: Units) => void }) {
   const ref = useRef<HTMLDialogElement>(null);
-  const [form, setForm] = useState<Settings>({ staleMinutes: 20, lowBatteryPct: 20, fenceMarginM: 5, hubSilentMinutes: 45, pushoverEnabled: true });
+  const [form, setForm] = useState<Settings>({ staleMinutes: 20, lowBatteryPct: 20, fenceMarginM: 5, hubSilentMinutes: 45, beepIntervalS: 30, beepMaxMinutes: 10, pushoverEnabled: true });
   const [notes, setNotes] = useState<Notifications | null>(null);
   const [mine, setMine] = useState<string | null>(null);        // this device's push endpoint, when subscribed
   const [support, setSupport] = useState<PushSupport>("ok");
@@ -44,7 +44,7 @@ export function SettingsDialog({ open, onClose, units, onUnits }: { open: boolea
     finally { setBusy(false); }
   };
 
-  const num = (k: "staleMinutes" | "lowBatteryPct" | "fenceMarginM" | "hubSilentMinutes") => (
+  const num = (k: "staleMinutes" | "lowBatteryPct" | "fenceMarginM" | "hubSilentMinutes" | "beepIntervalS" | "beepMaxMinutes") => (
     <input type="number" min={0} step="any" value={form[k]} onChange={(e) => setForm({ ...form, [k]: Number(e.target.value) })} />
   );
   const save = async (e: React.FormEvent) => {
@@ -75,6 +75,11 @@ export function SettingsDialog({ open, onClose, units, onUnits }: { open: boolea
         <p className="hint">Backstop only: normally a hub is flagged offline about a minute after it drops off the network.</p>
         <label>Fence margin (metres){num("fenceMarginM")}</label>
         <p className="hint">A dog must be this far past a zone edge, on two readings in a row, before it counts as in or out.</p>
+
+        <h3>Collar beeps</h3>
+        <label>Beep every (seconds){num("beepIntervalS")}</label>
+        <label>Stop beeping after (minutes){num("beepMaxMinutes")}</label>
+        <p className="hint">While a dog with beeping on is outside the yard. Each beep plays for as long as the collar&apos;s own nag timeout says, so 30 seconds with a 10-second nag gives 10 seconds of beeping, then 20 quiet. Walking mode switches it off.</p>
 
         <h3>How should alerts reach you?</h3>
         <p className="hint">Use either, or both. Alerts are zone exits, silent dogs, low batteries and hub outages.</p>

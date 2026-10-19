@@ -16,6 +16,7 @@ export const api = {
     fetch(`/api/dogs/${dogId}/track?from=${Math.floor(from)}&to=${Math.ceil(to)}`).then((r) => json<TrackPoint[]>(r)),
   createDog: (input: Partial<Dog>) => send("POST", "/api/dogs", input).then((r) => json<Dog>(r)),
   updateDog: (id: string, input: Partial<Dog>) => send("PATCH", `/api/dogs/${id}`, input).then((r) => json<Dog>(r)),
+  beepDog: (id: string) => send("POST", `/api/dogs/${id}/beep`).then((r) => json<{ sent: boolean; acked: boolean }>(r)),
   deleteDog: (id: string) => send("DELETE", `/api/dogs/${id}`).then((r) => json<{ ok: true }>(r)),
   zones: () => fetch("/api/zones").then((r) => json<Zone[]>(r)),
   createZone: (input: Record<string, unknown>) => send("POST", "/api/zones", input).then((r) => json<Zone>(r)),
@@ -34,7 +35,7 @@ export const api = {
   /** Quiet the exit/silence alerts until every dog is back home (capped at 6 h by the server). */
   startWalk: () => send("PUT", "/api/snooze", { untilBack: true }).then((r) => json<WalkState>(r)),
   endWalk: () => send("PUT", "/api/snooze", { minutes: null }).then((r) => json<WalkState>(r)),
-  health: () => fetch("/api/health").then((r) => json<{ connected: boolean; subscribedAt: number | null; lastPacketAt: number | null; packetAgeS: number | null }>(r)),
+  health: () => fetch("/api/health").then((r) => json<{ connected: boolean; subscribedAt: number | null; lastPacketAt: number | null; packetAgeS: number | null; beeper: boolean }>(r)),
   hubs: () => fetch("/api/hubs").then((r) => json<Hub[]>(r)),
   notifications: () => fetch("/api/notifications").then((r) => json<Notifications>(r)),
   subscribePush: (subscription: PushSubscriptionJSON, label: string) =>

@@ -10,13 +10,14 @@ export interface DogDialogState {
   tracker?: string;
 }
 
-export function DogDialog({ state, trackers, onClose, onSaved }: {
-  state: DogDialogState | null; trackers: Tracker[]; onClose: () => void; onSaved: () => void;
+export function DogDialog({ state, trackers, beeper, onClose, onSaved }: {
+  state: DogDialogState | null; trackers: Tracker[]; /** The server can beep collars (it knows the hub's address). */ beeper: boolean; onClose: () => void; onSaved: () => void;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
-  const [form, setForm] = useState({ name: "", emoji: "🐕", color: PALETTE[0], breed: "", notes: "", tracker: "", alerts: true });
+  const [form, setForm] = useState({ name: "", emoji: "🐕", color: PALETTE[0], breed: "", notes: "", tracker: "", alerts: true, beep: false });
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [beepNote, setBeepNote] = useState<string | null>(null);
   const editing = state?.dog;
 
   useEffect(() => {
@@ -26,9 +27,9 @@ export function DogDialog({ state, trackers, onClose, onSaved }: {
       const d = state.dog;
       setForm({
         name: d?.name ?? "", emoji: d?.emoji ?? "🐕", color: d ? dogColor(d) : PALETTE[Math.floor(Math.random() * PALETTE.length)],
-        breed: d?.breed ?? "", notes: d?.notes ?? "", tracker: d?.tracker ?? state.tracker ?? "", alerts: d?.alerts ?? true,
+        breed: d?.breed ?? "", notes: d?.notes ?? "", tracker: d?.tracker ?? state.tracker ?? "", alerts: d?.alerts ?? true, beep: d?.beep ?? false,
       });
-      setError(null);
+      setError(null); setBeepNote(null);
       if (!el.open) el.showModal();
     } else if (el.open) el.close();
   }, [state]);
@@ -41,7 +42,7 @@ export function DogDialog({ state, trackers, onClose, onSaved }: {
     e.preventDefault();
     setBusy(true); setError(null);
     try {
-      const body = { name: form.name, emoji: form.emoji, color: form.color, breed: form.breed, notes: form.notes, tracker: form.tracker || null, alerts: form.alerts };
+      const body = { name: form.name, emoji: form.emoji, color: form.color, breed: form.breed, notes: form.notes, tracker: form.tracker || null, alerts: form.alerts, beep: form.beep };
       if (editing) await api.updateDog(editing.id, body as Partial<Dog>);
       else await api.createDog(body as Partial<Dog>);
       onSaved(); onClose();
@@ -93,6 +94,25 @@ export function DogDialog({ state, trackers, onClose, onSaved }: {
           <input type="checkbox" checked={form.alerts} onChange={(e) => set("alerts", e.target.checked)} />
           Send alerts for this dog (notifications and pop-ups)
         </label>
+        {beeper && (
+          <div>
+            <label className="check">
+              <input type="checkbox" checked={form.beep} onChange={(e) => set("beep", e.target.checked)} />
+              Beep this dog&apos;s collar while it&apos;s outside the yard
+            </label>
+            {editing && editing.tracker && (
+              <p className="hint">
+                <button type="button" className="link" disabled={busy} onClick={async () => {
+                  setBusy(true); setBeepNote("Sending…");
+                  try { const r = await api.beepDog(editing.id); setBeepNote(r.acked ? "Sent. The collar confirmed it." : "Sent, but no confirmation came back."); }
+                  catch (e) { setBeepNote((e as Error).message); }
+                  finally { setBusy(false); }
+                }}>Test beep now</button>
+                {beepNote && <span> · {beepNote}</span>}
+              </p>
+            )}
+          </div>
+        )}
         {editing && form.tracker !== (editing.tracker ?? "") && editing.tracker && (
           <p className="hint">Swapping collars keeps {editing.name}&apos;s history; the old tracker returns to the inbox.</p>
         )}
