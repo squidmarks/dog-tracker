@@ -104,7 +104,7 @@ export function DogDialog({ state, trackers, beeper, onClose, onSaved }: {
               <p className="hint">
                 <button type="button" className="link" disabled={busy} onClick={async () => {
                   setBusy(true); setBeepNote("Sending…");
-                  try { const r = await api.beepDog(editing.id); setBeepNote(r.acked ? "Sent. The collar confirmed it." : "Sent, but no confirmation came back."); }
+                  try { const r = await api.beepDog(editing.id); setBeepNote(r.acked ? "Sent. The collar confirmed it." : "Sent. No receipt came back, but the collar usually beeps anyway (the reply often gets lost)."); }
                   catch (e) { setBeepNote((e as Error).message); }
                   finally { setBusy(false); }
                 }}>Test beep now</button>
