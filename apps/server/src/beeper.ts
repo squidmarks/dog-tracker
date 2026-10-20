@@ -1,6 +1,6 @@
 import type { Db } from "./db.js";
 import type { SendResult } from "./collar.js";
-import { isCharging, type Monitor } from "./rules.js";
+import type { Monitor } from "./rules.js";
 
 /**
  * Beeps a dog's collar while it is outside its zone. Each beep is one text message to that collar (whose notification
@@ -25,7 +25,7 @@ export class Beeper {
       const walking = (await this.db.snooze(now)) != null;
       for (const dog of await this.db.dogs()) {
         const st = this.state.get(dog.id);
-        const wanted = dog.beep === true && !!dog.tracker && !isCharging(dog) && !walking && this.monitor.isOutside(dog.id);
+        const wanted = dog.beep === true && !!dog.tracker && !walking && this.monitor.isOutside(dog.id);
         if (!wanted) {
           if (st) { this.state.delete(dog.id); this.log(`[beeper] ${dog.name}: stopped after ${st.beeps} beep${st.beeps === 1 ? "" : "s"}`); }
           continue;

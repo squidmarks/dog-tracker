@@ -32,13 +32,6 @@ describe.skipIf(!hasMongo)("Beeper (Mongo)", () => {
   });
   afterEach(async () => { await db.close(); });
 
-  it("stays quiet while the tag is on the charger, even if it sits outside the yard", async () => {
-    await db.apply({ kind: "telemetry", node: "!aaaa0001", battery: 101, voltage: 4.2 }, 100);
-    await leave();
-    await beeper.tick(T); await beeper.tick(T + 60);
-    expect(sent).toEqual([]);
-  });
-
   it("stays quiet while the dog is inside", async () => {
     await beeper.tick(T); await beeper.tick(T + 60);
     expect(sent).toEqual([]);

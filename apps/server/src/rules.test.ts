@@ -36,13 +36,6 @@ describe.skipIf(!hasMongo)("Monitor (Mongo)", () => {
     expect(monitor.isInside(dogId, (await db.zones())[0].id)).toBe(true);
   });
 
-  it("ignores a tag that is charging: no zone alerts, no silence alerts", async () => {
-    await db.apply({ kind: "telemetry", node: "!aaaa0001", battery: 101, voltage: 4.2 }, 100);
-    await fix(2, 60); await fix(3, 65);
-    await monitor.tick(100 + 3 * 3600);
-    expect(events).toHaveLength(0);
-  });
-
   describe("walking mode (snooze)", () => {
     const snoozeFor = (secs: number) => db.setSnooze(Math.floor(Date.now() / 1000) + secs);
 

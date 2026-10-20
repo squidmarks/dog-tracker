@@ -9,9 +9,6 @@ interface LiveDog {
 }
 
 const appliesTo = (z: Zone, dogId: string) => z.dogs === null || z.dogs.includes(dogId);
-/** Meshtastic reports 101% while a tag is plugged in. A charging tag is on the shelf, not on the dog, so it's left alone. */
-export const isCharging = (d: { battery?: unknown }) => typeof d.battery === "number" && d.battery > 100;
-
 /** Walking mode quiets these; battery and hub outages are never snoozed. */
 const SNOOZABLE: EventType[] = ["zone_exit", "zone_enter", "silent"];
 const alerts = (z: Zone, kind: "enter" | "exit") => z.alertOn === "both" || z.alertOn === kind;
@@ -40,7 +37,7 @@ export class Monitor {
     if (reset) { this.membership = new Membership(rules); this.lastRules = key; }
     // Seed every (dog, zone) we have no state for from the dog's last known position, without raising events.
     for (const d of (await this.db.dogs()) as unknown as LiveDog[]) {
-      if (d.lat == null || d.lon == null || isCharging(d)) continue;
+      if (d.lat == null || d.lon == null) continue;
       for (const z of this.zones) {
         if (appliesTo(z, d.id) && !this.membership.has(`${d.id}:${z.id}`)) this.membership.update(`${d.id}:${z.id}`, d.lat, d.lon, z.ring);
       }
@@ -59,8 +56,6 @@ export class Monitor {
   zonesFor(dogId: string): Zone[] { return this.zones.filter((z) => appliesTo(z, dogId)); }
 
   private async observe(dog: LiveDog, lat: number, lon: number) {
-    // On the charger: no alerts, and forget where it "was" so the first fix after it comes off starts fresh.
-    if (isCharging(dog)) { this.membership.forget(`${dog.id}:`); return; }
     for (const z of this.zones) {
       if (!appliesTo(z, dog.id)) continue;
       const t = this.membership.update(`${dog.id}:${z.id}`, lat, lon, z.ring);
@@ -85,11 +80,6 @@ export class Monitor {
     const settings = await this.db.settings();
     for (const dog of (await this.db.dogs()) as unknown as LiveDog[]) {
       if (!dog.tracker) continue;
-      if (isCharging(dog)) {                              // silence checks resume when it comes off the charger
-        const f = this.flags.get(dog.id);
-        if (f?.lowBattery) { f.lowBattery = false; await this.event(dog, "battery_ok", false, `${dog.name}'s battery is back to charging`); }
-        continue;
-      }
       const first = !this.flags.has(dog.id);
       const f = this.flags.get(dog.id) ?? { silent: false, lowBattery: false };
       this.flags.set(dog.id, f);
@@ -134,7 +124,7 @@ export class Monitor {
   async evaluateWalk(now = Math.floor(Date.now() / 1000)) {
     const walk = await this.db.walk(now);
     if (!walk || walk.mode !== "return") return;
-    const dogs = ((await this.db.dogs()) as unknown as LiveDog[]).filter((d) => d.tracker && !isCharging(d) && d.alerts !== false && d.lat != null);
+    const dogs = ((await this.db.dogs()) as unknown as LiveDog[]).filter((d) => d.tracker && d.alerts !== false && d.lat != null);
     if (!dogs.length) return;
     const away = dogs.filter((d) => !this.isBack(d));
     if (!walk.armed) {
