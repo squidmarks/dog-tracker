@@ -10,7 +10,7 @@ interface LiveDog {
 
 const appliesTo = (z: Zone, dogId: string) => z.dogs === null || z.dogs.includes(dogId);
 /** Meshtastic reports 101% while a tag is plugged in. A charging tag is on the shelf, not on the dog, so it's left alone. */
-export const isCharging = (d: { battery?: unknown }) => typeof d.battery === "number" && d.battery > 100;
+export const isCharging = (d: object) => typeof (d as { battery?: unknown }).battery === "number" && (d as { battery: number }).battery > 100;
 
 /** Walking mode quiets these; battery and hub outages are never snoozed. */
 const SNOOZABLE: EventType[] = ["zone_exit", "zone_enter", "silent"];
