@@ -87,6 +87,8 @@ export function sendTextViaHub(m: CollarMessage): Promise<SendResult> {
           phase = "ack";
           write(create(Mesh.ToRadioSchema, { payloadVariant: { case: "packet", value: create(Mesh.MeshPacketSchema, {
             to: nodeNum(m.node), channel: m.channel ?? 0, id: packetId, wantAck: true,
+            // What the official clients send: without a priority the radio may treat this as background traffic.
+            priority: Mesh.MeshPacket_Priority.RELIABLE, hopLimit: 3,
             payloadVariant: { case: "decoded", value: create(Mesh.DataSchema, { portnum: Portnums.PortNum.TEXT_MESSAGE_APP, payload: Buffer.from(m.text) }) },
           }) } }));
           sentAt = true;

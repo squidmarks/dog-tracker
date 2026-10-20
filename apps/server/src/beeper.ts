@@ -48,6 +48,8 @@ export class Beeper {
     const dog = await this.db.dog(dogId);
     if (!dog) return { sent: false, acked: false, error: "unknown dog" };
     if (!dog.tracker) return { sent: false, acked: false, error: "this dog has no tracker linked" };
-    return this.send(dog.tracker);
+    let r = await this.send(dog.tracker), tries = 1;
+    while (r.sent && !r.acked && tries < 3) { r = await this.send(dog.tracker); tries++; }
+    return r;
   }
 }
